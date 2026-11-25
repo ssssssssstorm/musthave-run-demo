@@ -99,6 +99,51 @@ const CORGI_HERO = [
 ];
 
 // Front-facing corgi for intro spin (24x24)
+
+// Hero wag frame (tail & rump perked 1px + happy ear/cheek wiggle)
+const CORGI_HERO_WAG = [
+    '............KKK......KKK....',
+    '...........KOOOK....KOOOK...',
+    '...........KOPOK....KOPOK...',
+    '...........KOPPOK..KOPPOK...',
+    '...........KOPPOKKKKOPPOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOWKOOWWOKWOK...',
+    '...........KOOKKOOWWOKKOK...',
+    '...KKK.....KOOOOOWKKWOOOOK..',
+    '..KOOOK....KWWWWWWKKWWWWWK..',
+    '..KOOKKKKKKKWWKWWWWWWKWWWK..',
+    '.KLOOOOOOOOKWWWKWWPPWKWWWK..',
+    '.KKOOOOOOOOOKWWWKKKKKWWWK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KDOOOOOOOOOWWWWWWWWWWOK....',
+    '..KDOOWWWWOOWWWWWWWWWOK.....',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KKKKKK.KKKKK.KKKKKK.......',
+];
+
+
+const PIXEL_MOON = [
+  '...CCCC..',
+  '..CYYYY..',
+  '.CYYY....',
+  'CYYY.....',
+  'CYYY.....',
+  'CYYY.....',
+  '.CYYY....',
+  '..CYYYY..',
+  '...CCCC..',
+];
+
+const NEON_MOTH = [
+  ['Y.Y', '.W.', 'Y.Y'],
+  ['.Y.', 'YMY', '.Y.'],
+];
+
 const CORGI_FRONT = [
   '..KKK..........KKK......',
   '.KOOOK........KOOOK.....',
@@ -665,6 +710,72 @@ const CLOUD_LARGE = [
   '.KKKKKKKKKKKKKKKKKKKKKKKK.',
 ];
 
+const AMBIENT_COLORS = {
+  '.': null,
+  'P': '#FF9CC2',
+  'C': '#FFCC99',
+  'Y': '#FFF0B8',
+  'Q': '#FFC2D4',
+  'W': '#FFE4EE',
+  'B': '#7D3B72',
+  'N': '#5B285C',
+  'A': '#FF6AA3',
+};
+
+// High-altitude soft wisp cloud (muted pastel, borderless for atmospheric depth)
+const CLOUD_WISP = [
+  '....PPPPPP......',
+  '..PPQQQQQQPP....',
+  '.PQQWWWWWWQQPP..',
+  'PPQQQQQQQQQQQQP.',
+];
+
+// Pixel birds / seagulls at 2 parallax depths (muted dusk plum so foreground pops)
+const BIRD_FAR_UP = [
+  'B...B',
+  '.B.B.',
+  '..B..',
+];
+const BIRD_FAR_DOWN = [
+  '..B..',
+  '.B.B.',
+  'B...B',
+];
+
+const BIRD_NEAR_UP = [
+  'N.....N',
+  '.N...N.',
+  '..NNN..',
+  '...P...',
+];
+const BIRD_NEAR_GLIDE = [
+  '.NN.NN.',
+  'N..N..N',
+  '...P...',
+];
+const BIRD_NEAR_DOWN = [
+  '..NNN..',
+  '.N...N.',
+  'N..P..N',
+];
+
+// Distant retro blimp & airplane (low-contrast atmospheric silhouettes)
+const DISTANT_BLIMP = [
+  '..NNNNNNNNNN......',
+  '.NPPPPPPPPPPN...N.',
+  'NPAAAPAAAPAAAN.NN.',
+  'NPPPPPPPPPPPPNNNN.',
+  '.NNNNNNNNNNNNN..N.',
+  '....N....N........',
+];
+
+const DISTANT_PLANE = [
+  '......N....',
+  'N....NN....',
+  'NNNNNNNNNN.',
+  '.N...NN....',
+];
+
 window.MH_SPRITES = (function () {
   const backRight = bakeSprite(CORGI_BACK_RIGHT);
   const frontRight = bakeSprite(CORGI_FRONT_RIGHT);
@@ -672,6 +783,7 @@ window.MH_SPRITES = (function () {
   return {
     corgi: {
       hero: bakeSprite(CORGI_HERO),
+      heroWag: bakeSprite(CORGI_HERO_WAG),
       front: bakeSprite(CORGI_FRONT),
       backA: bakeSprite(CORGI_BACK_A),
       backB: bakeSprite(CORGI_BACK_B),
@@ -714,6 +826,20 @@ window.MH_SPRITES = (function () {
     clouds: {
       small: bakeSprite(CLOUD_SMALL),
       large: bakeSprite(CLOUD_LARGE),
+      wisp: bakeSprite(CLOUD_WISP, AMBIENT_COLORS),
+    },
+    ambient: {
+      birdFar: [bakeSprite(BIRD_FAR_UP, AMBIENT_COLORS), bakeSprite(BIRD_FAR_DOWN, AMBIENT_COLORS)],
+      birdNear: [
+        bakeSprite(BIRD_NEAR_UP, AMBIENT_COLORS),
+        bakeSprite(BIRD_NEAR_GLIDE, AMBIENT_COLORS),
+        bakeSprite(BIRD_NEAR_DOWN, AMBIENT_COLORS),
+        bakeSprite(BIRD_NEAR_GLIDE, AMBIENT_COLORS),
+      ],
+      blimp: bakeSprite(DISTANT_BLIMP, AMBIENT_COLORS),
+      plane: bakeSprite(DISTANT_PLANE, AMBIENT_COLORS),
+      moth: NEON_MOTH.map(m => bakeSprite(m)),
+      moon: bakeSprite(PIXEL_MOON, AMBIENT_COLORS),
     },
   };
 })();
