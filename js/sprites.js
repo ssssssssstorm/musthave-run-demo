@@ -127,6 +127,34 @@ const CORGI_HERO_WAG = [
 ];
 
 
+
+// Tall 1x pixel palm for night menu (no fractional scaling!)
+const PALM_MENU_TRUNK = [
+  '............GG............',
+  '............GG............',
+  '...........GGG............',
+  '...........GG.............',
+  '...........GG.............',
+  '..........GGG.............',
+  '..........GG..............',
+  '..........GG..............',
+  '.........GGG..............',
+  '.........GG...............',
+  '.........GG...............',
+  '........GGG...............',
+  '........GG................',
+  '........GG................',
+  '.......GGG................',
+  '.......GG.................',
+  '.......GG.................',
+  '.......GG.................',
+  '......GGG.................',
+  '......GG..................',
+  '......GG..................',
+  '.....GGGG.................',
+  '....GGGGGG................',
+];
+
 const PIXEL_MOON = [
   '...CCCC..',
   '..CYYYY..',
@@ -139,9 +167,95 @@ const PIXEL_MOON = [
   '...CCCC..',
 ];
 
+
+// 8-bit rooftop cat (2 frames: tail up / tail flick) & sidewalk pixel trash can
+const CAT_ROOF_A = [
+  '.K...K....',
+  '.KK.KK....',
+  '.KKKKK..K.',
+  '.KYKYK..K.',
+  '.KKKKK..K.',
+  '..KKKK.KK.',
+  '..KKKKKK..',
+  '..KKKKK...',
+];
+const CAT_ROOF_B = [
+  '.K...K....',
+  '.KK.KK....',
+  '.KKKKK....',
+  '.KYKYK.KK.',
+  '.KKKKK..K.',
+  '..KKKKKK..',
+  '..KKKKKK..',
+  '..KKKKK...',
+];
+const TRASH_CAN = [
+  '..KKKKK..',
+  '.KIIIIKK.',
+  'KKKKKKKKK',
+  'KITITITIK',
+  'KIVIVIVIK',
+  'KITITITIK',
+  'KIVIVIVIK',
+  'KITITITIK',
+  'KIVIVIVIK',
+  '.KKKKKKK.',
+];
+
 const NEON_MOTH = [
   ['Y.Y', '.W.', 'Y.Y'],
   ['.Y.', 'YMY', '.Y.'],
+];
+
+
+const CORGI_HERO_BLINK = [
+    '............KKK......KKK....',
+    '...........KOOOK....KOOOK...',
+    '...........KOPOK....KOPOK...',
+    '...........KOPPOK..KOPPOK...',
+    '...........KOPPOKKKKOPPOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOKKOOWWOKKOK...',
+    '...........KOOOOOOWWOOOOOK..',
+    '...........KOOOOOWKKWOOOOK..',
+    '..KKK......KWWWWWWKKWWWWWK..',
+    '.KOOKKKKKKKKWWKWWWWWWKWWWK..',
+    'KLOOOOOOOOOKWWWKWWPPWKWWWK..',
+    'KKOOOOOOOOOOKWWWKKKKKWWWK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KDOOOOOOOOOWWWWWWWWWWOK....',
+    '..KDOOWWWWOOWWWWWWWWWOK.....',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KKKKKK.KKKKK.KKKKKK.......',
+];
+
+const CORGI_HERO_YAWN = [
+    '............KKK......KKK....',
+    '...........KOOOK....KOOOK...',
+    '...........KOPOK....KOPOK...',
+    '...........KOPPOK..KOPPOK...',
+    '...........KOPPOKKKKOPPOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOOOOWWWOOOOK...',
+    '...........KOOKKOOWWOKKOK...',
+    '...........KOOOOOOWWOOOOOK..',
+    '...........KOOOOOWKKWOOOOK..',
+    '..KKK......KWWWWWWKKWWWWWK..',
+    '.KOOKKKKKKKKWWKWWWWKKKWWWK..',
+    'KLOOOOOOOOOKWWWKWWPPPKWWWK..',
+    'KKOOOOOOOOOOKWWWKPPPPKWWK...',
+    '.KOOOOOOOOOOWWWWWKKKKWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KOOOOOOOOOOWWWWWWWWWWWOK...',
+    '.KDOOOOOOOOOWWWWWWWWWWOK....',
+    '..KDOOWWWWOOWWWWWWWWWOK.....',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KWWKWWKWWKWWKWWKKWWK......',
+    '..KKKKKK.KKKKK.KKKKKK.......',
 ];
 
 const CORGI_FRONT = [
@@ -784,6 +898,8 @@ window.MH_SPRITES = (function () {
     corgi: {
       hero: bakeSprite(CORGI_HERO),
       heroWag: bakeSprite(CORGI_HERO_WAG),
+      heroBlink: bakeSprite(CORGI_HERO_BLINK),
+      heroYawn: bakeSprite(CORGI_HERO_YAWN),
       front: bakeSprite(CORGI_FRONT),
       backA: bakeSprite(CORGI_BACK_A),
       backB: bakeSprite(CORGI_BACK_B),
@@ -840,6 +956,9 @@ window.MH_SPRITES = (function () {
       plane: bakeSprite(DISTANT_PLANE, AMBIENT_COLORS),
       moth: NEON_MOTH.map(m => bakeSprite(m)),
       moon: bakeSprite(PIXEL_MOON, AMBIENT_COLORS),
+      palmMenuTrunk: bakeSprite(PALM_MENU_TRUNK, { '.': null, 'G': '#471B54' }),
+      catRoof: [bakeSprite(CAT_ROOF_A, { '.': null, 'K': '#11051E', 'Y': '#FFD100' }), bakeSprite(CAT_ROOF_B, { '.': null, 'K': '#11051E', 'Y': '#FFD100' })],
+      trashCan: bakeSprite(TRASH_CAN),
     },
   };
 })();

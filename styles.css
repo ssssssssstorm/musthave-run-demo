@@ -820,3 +820,85 @@ html, body {
   animation: neonPressFlicker 0.14s steps(2);
   transform: translateY(3px);
 }
+
+/* Stepped 8-bit Pixel Menu Button Polish & Idle Animations */
+@keyframes pxPlayBounce {
+  0%, 100% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(3px); opacity: 0.78; }
+}
+
+@keyframes pxBarDance {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.45); }
+}
+
+@keyframes pxShimmerSweep {
+  0%, 72% { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
+  80% { opacity: 0.28; }
+  94% { transform: translateX(260%) skewX(-18deg); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes pxHeartPulse {
+  0%, 76%, 100% { transform: scale(1); }
+  86% { transform: scale(1.22); }
+}
+
+.screen-start .lives-badge {
+  clip-path: polygon(
+    4px 0, calc(100% - 4px) 0,
+    100% 4px, 100% calc(100% - 4px),
+    calc(100% - 4px) 100%, 4px 100%,
+    0 calc(100% - 4px), 0 4px
+  );
+}
+
+.screen-start .px-heart-img:nth-child(1) { animation: pxHeartPulse 2.5s steps(2) 0.0s infinite; }
+.screen-start .px-heart-img:nth-child(2) { animation: pxHeartPulse 2.5s steps(2) 0.18s infinite; }
+.screen-start .px-heart-img:nth-child(3) { animation: pxHeartPulse 2.5s steps(2) 0.36s infinite; }
+.screen-start .px-heart-img:nth-child(4) { animation: pxHeartPulse 2.5s steps(2) 0.54s infinite; }
+.screen-start .px-heart-img:nth-child(5) { animation: pxHeartPulse 2.5s steps(2) 0.72s infinite; }
+
+.screen-start .px-btn {
+  overflow: hidden;
+  clip-path: polygon(
+    6px 0, calc(100% - 6px) 0,
+    calc(100% - 6px) 3px, calc(100% - 3px) 3px,
+    calc(100% - 3px) 6px, 100% 6px,
+    100% calc(100% - 6px), calc(100% - 3px) calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 3px), calc(100% - 6px) calc(100% - 3px),
+    calc(100% - 6px) 100%, 6px 100%,
+    6px calc(100% - 3px), 3px calc(100% - 3px),
+    3px calc(100% - 6px), 0 calc(100% - 6px),
+    0 6px, 3px 6px,
+    3px 3px, 6px 3px
+  );
+}
+
+.screen-start .px-btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 36px;
+  background: linear-gradient(90deg, transparent, rgba(255, 249, 242, 0.55), transparent);
+  pointer-events: none;
+  animation: pxShimmerSweep 4.2s linear infinite;
+}
+
+.screen-start .px-btn-white::after {
+  animation-delay: 2.1s;
+}
+
+.screen-start .px-play-tri {
+  display: inline-block;
+  animation: pxPlayBounce 0.9s steps(2) infinite;
+}
+
+.screen-start .px-bars i {
+  transform-origin: bottom center;
+}
+.screen-start .px-bars .b1 { animation: pxBarDance 1.05s steps(2) 0.0s infinite; }
+.screen-start .px-bars .b2 { animation: pxBarDance 1.05s steps(2) 0.25s infinite; }
+.screen-start .px-bars .b3 { animation: pxBarDance 1.05s steps(2) 0.5s infinite; }
