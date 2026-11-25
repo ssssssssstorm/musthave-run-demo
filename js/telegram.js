@@ -1,24 +1,78 @@
-// Telegram WebApp SDK wrapper + clean backend integration stubs
+// Telegram WebApp SDK wrapper + fullscreen / safe-area handling + backend stubs
 window.MH_TG = (function () {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
-  // Config placeholders for production deployment
   const CONFIG = {
     channelUsername: 'musthave_tobacco',
     channelUrl: 'https://t.me/musthave_tobacco',
-    // Replace with your real backend endpoint (Cloudflare Worker / Vercel / FastAPI / Node)
-    // that verifies Telegram initData HMAC & calls Bot API getChatMember.
     apiBaseUrl: null,
   };
+
+  function applySafeAreaVars() {
+    const root = document.documentElement;
+    if (!tg) return;
+    const sa = tg.safeAreaInset || { top: 0, bottom: 0, left: 0, right: 0 };
+    const ca = tg.contentSafeAreaInset || { top: 0, bottom: 0, left: 0, right: 0 };
+    const topTotal = (sa.top || 0) + (ca.top || 0);
+    const bottomTotal = (sa.bottom || 0) + (ca.bottom || 0);
+    root.style.setProperty('--tg-safe-area-inset-top', `${sa.top || 0}px`);
+    root.style.setProperty('--tg-safe-area-inset-bottom', `${sa.bottom || 0}px`);
+    root.style.setProperty('--tg-safe-area-inset-left', `${sa.left || 0}px`);
+    root.style.setProperty('--tg-safe-area-inset-right', `${sa.right || 0}px`);
+    root.style.setProperty('--tg-content-safe-area-inset-top', `${ca.top || 0}px`);
+    root.style.setProperty('--tg-content-safe-area-inset-bottom', `${ca.bottom || 0}px`);
+    root.style.setProperty('--tg-safe-top-total', `${topTotal}px`);
+    root.style.setProperty('--tg-safe-bottom-total', `${bottomTotal}px`);
+  }
+
+  function tryFullscreen() {
+    if (!tg) return;
+    try {
+      if (tg.expand) tg.expand();
+      const canFs = typeof tg.requestFullscreen === 'function'
+        && (!tg.isVersionAtLeast || tg.isVersionAtLeast('8.0'));
+      if (canFs && !tg.isFullscreen) {
+        tg.requestFullscreen();
+      }
+    } catch (_) {}
+  }
+
+  function notifyViewport() {
+    applySafeAreaVars();
+    window.dispatchEvent(new Event('mh-viewport'));
+  }
+
+  function setChromeTheme(kind) {
+    if (!tg) return;
+    try {
+      const col = kind === 'sunset' ? '#2A154B' : '#120624';
+      if (tg.setHeaderColor) tg.setHeaderColor(col);
+      if (tg.setBackgroundColor) tg.setBackgroundColor(col);
+    } catch (_) {}
+  }
 
   function init() {
     if (!tg) return;
     try {
       tg.ready();
-      tg.expand();
+      tryFullscreen();
       if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-      if (tg.setHeaderColor) tg.setHeaderColor('#261447');
-      if (tg.setBackgroundColor) tg.setBackgroundColor('#140C1C');
+      setChromeTheme('night');
+      applySafeAreaVars();
+
+      if (tg.onEvent) {
+        tg.onEvent('viewportChanged', notifyViewport);
+        tg.onEvent('fullscreenChanged', notifyViewport);
+        tg.onEvent('safeAreaChanged', notifyViewport);
+        tg.onEvent('contentSafeAreaChanged', notifyViewport);
+      }
+
+      // Some mobile Telegram clients only allow fullscreen after a user gesture
+      const onFirstTap = () => {
+        tryFullscreen();
+        window.removeEventListener('pointerdown', onFirstTap, true);
+      };
+      window.addEventListener('pointerdown', onFirstTap, true);
     } catch (_) {}
   }
 
@@ -61,11 +115,6 @@ window.MH_TG = (function () {
     window.open(CONFIG.channelUrl, '_blank', 'noopener');
   }
 
-  /**
-   * Backend seam: Verify channel subscription.
-   * In production, POST window.Telegram.WebApp.initData to `${CONFIG.apiBaseUrl}/api/check-subscription`
-   * which validates initData signature and calls Telegram Bot API `getChatMember`.
-   */
   async function checkSubscription() {
     if (CONFIG.apiBaseUrl && tg && tg.initData) {
       const res = await fetch(`${CONFIG.apiBaseUrl}/api/check-subscription`, {
@@ -73,17 +122,12 @@ window.MH_TG = (function () {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
       });
-      return res.json(); // expected: { subscribed: boolean }
+      return res.json();
     }
-    // Demo mode mock verification delay
     await new Promise(r => setTimeout(r, 650));
     return { subscribed: true, demo: true };
   }
 
-  /**
-   * Backend seam: Submit run score & fetch live leaderboard.
-   * In production, also handles referral `?startapp=ref_<userId>` (+1 life).
-   */
   async function submitScore(score) {
     if (CONFIG.apiBaseUrl && tg && tg.initData) {
       await fetch(`${CONFIG.apiBaseUrl}/api/score`, {
@@ -98,6 +142,7 @@ window.MH_TG = (function () {
   return {
     CONFIG,
     init,
+    setChromeTheme,
     haptic,
     getUser,
     openChannel,

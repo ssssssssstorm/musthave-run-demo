@@ -1,10 +1,5 @@
 (function () {
-  const W = 195;
-  const H = 422;
-  const GROUND_Y = 252;      // ~60% down screen (matching 6_scale_reference.png)
-  const MENU_GROUND_Y = 254;
-  const PLAY_SCALE = 1;      // Corgi 27px / 195px ≈ 1/7.2 screen width (airy Dino scale!)
-
+  const stageEl = document.getElementById('phone-stage');
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
@@ -12,6 +7,14 @@
   const goCanvas = document.getElementById('gameover-canvas');
   const goCtx = goCanvas.getContext('2d');
   goCtx.imageSmoothingEnabled = false;
+
+  // Dynamic integer-scaled logical canvas size (edge-to-edge on any phone, zero letterboxing!)
+  let W = 195;
+  let H = 422;
+  let GROUND_Y = 253;
+  let MENU_GROUND_Y = 253;
+  let CORGI_GROUND_TOP = 235;
+  const PLAY_SCALE = 1;
 
   const HEART_FULL_URI = MH_SPRITES.ui.heartFull.toDataURL();
   const HEART_EMPTY_URI = MH_SPRITES.ui.heartEmpty.toDataURL();
@@ -22,6 +25,7 @@
   const btnHudBack = document.getElementById('btn-hud-back');
   const hudFruitIcon = document.getElementById('hud-fruit-icon');
   const hudHeartIcon = document.getElementById('hud-heart-icon');
+  const hudScorePill = document.getElementById('hud-score').parentElement;
   const hudScoreEl = document.getElementById('hud-score');
   const hudLivesEl = document.getElementById('hud-lives');
 
@@ -71,14 +75,16 @@
   const params = new URLSearchParams(window.location.search);
   const autoJump = params.get('autojump') === '1';
 
-  // Crisp binary pixel text renderer for Canvas
+  // ============================================================
+  // CRISP BINARY PIXEL TEXT RENDERER
+  // ============================================================
   const textScratch = document.createElement('canvas');
-  textScratch.width = 188;
+  textScratch.width = 210;
   textScratch.height = 24;
   const textCtx = textScratch.getContext('2d');
 
   const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = 188;
+  maskCanvas.width = 210;
   maskCanvas.height = 24;
   const maskCtx = maskCanvas.getContext('2d');
 
@@ -154,7 +160,7 @@
   }
 
   // ============================================================
-  // SMOOTH 10-STOP 8-BIT VICE CITY SUNSET SKY + RETRO SUN + SOFT GROUND GRADIENT
+  // DITHERING & OFFSCREEN CACHED BACKGROUNDS
   // ============================================================
   const BAYER_4 = [
     [0, 8, 2, 10],
@@ -180,7 +186,7 @@
       while (s < stops.length - 2 && t > stops[s + 1].y) s++;
       const a = stops[s];
       const b = stops[s + 1];
-      const localT = Math.max(0, Math.min(1, (t - a.y) / (b.y - a.y)));
+      const localT = Math.max(0, Math.min(1, (t - a.y) / Math.max(0.0001, b.y - a.y)));
 
       for (let x = 0; x < width; x++) {
         const threshold = (BAYER_4[y & 3][x & 3] + 0.5) / 16;
@@ -195,12 +201,24 @@
     sctx.putImageData(img, 0, 0);
   }
 
-  const skyCanvas = (function buildSky() {
-    const c = document.createElement('canvas');
-    c.width = W;
-    c.height = MENU_GROUND_Y;
-    const sctx = c.getContext('2d');
-    const stops = [
+  let skyCanvas = null;
+  let groundBgCanvas = null;
+  let nightBgCanvas = null;
+  let sunGlowCanvas = null;
+  let vignetteCanvas = null;
+  let SUN_CX = 98;
+  let SUN_CY = 128;
+
+  function rebuildStaticCanvases() {
+    SUN_CX = Math.round(W * 0.5);
+    SUN_CY = Math.round(GROUND_Y * 0.50);
+
+    // 1. Sunset Sky Canvas
+    skyCanvas = document.createElement('canvas');
+    skyCanvas.width = W;
+    skyCanvas.height = GROUND_Y;
+    const sctx = skyCanvas.getContext('2d');
+    renderDitheredGradient(sctx, W, GROUND_Y, [
       { y: 0.00, col: hexToRgb('#2A154B') },
       { y: 0.14, col: hexToRgb('#471F5E') },
       { y: 0.28, col: hexToRgb('#6E2C6E') },
@@ -211,13 +229,10 @@
       { y: 0.88, col: hexToRgb('#FF9B68') },
       { y: 0.95, col: hexToRgb('#FFB76B') },
       { y: 1.00, col: hexToRgb('#FFD57A') },
-    ];
-    renderDitheredGradient(sctx, W, MENU_GROUND_Y, stops);
+    ]);
 
-    // Vice City Pixel Sun
-    const sunCx = 98;
-    const sunCy = 128;
-    const sunR = 32;
+    // Vice City Retro Sliced Pixel Sun
+    const sunR = 31;
     for (let dy = -sunR; dy <= sunR; dy++) {
       for (let dx = -sunR; dx <= sunR; dx++) {
         if (dx * dx + dy * dy <= sunR * sunR) {
@@ -231,80 +246,144 @@
           else if (st < 0.56) sctx.fillStyle = '#FFD100';
           else if (st < 0.78) sctx.fillStyle = '#FF9E1B';
           else sctx.fillStyle = '#FF4A8D';
-          sctx.fillRect(sunCx + dx, sunCy + dy, 1, 1);
+          sctx.fillRect(SUN_CX + dx, SUN_CY + dy, 1, 1);
         }
       }
     }
-    return c;
-  })();
 
-  // Soft pastel-sunset dusk gradient for the lower ground (no harsh dark wall!)
-  const groundBgCanvas = (function buildGroundBg() {
+    // 2. Soft Sun Shimmer Glow Ring (cached offscreen)
+    sunGlowCanvas = document.createElement('canvas');
+    sunGlowCanvas.width = 96;
+    sunGlowCanvas.height = 96;
+    const sgctx = sunGlowCanvas.getContext('2d');
+    for (let y = 0; y < 96; y++) {
+      for (let x = 0; x < 96; x++) {
+        const dx = x - 48;
+        const dy = y - 48;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 29 && d < 46) {
+          const a = d < 36 ? 0.30 : d < 41 ? 0.18 : 0.09;
+          sgctx.fillStyle = `rgba(255, 224, 130, ${a})`;
+          sgctx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+
+    // 3. Soft Sunset-to-Dusk Lower Ground Gradient
     const gh = H - GROUND_Y;
-    const c = document.createElement('canvas');
-    c.width = W;
-    c.height = gh;
-    const gctx = c.getContext('2d');
-    const stops = [
-      { y: 0.00, col: hexToRgb('#F7B08A') }, // warm sunlit sand/curb glow
+    groundBgCanvas = document.createElement('canvas');
+    groundBgCanvas.width = W;
+    groundBgCanvas.height = gh;
+    const gctx = groundBgCanvas.getContext('2d');
+    renderDitheredGradient(gctx, W, gh, [
+      { y: 0.00, col: hexToRgb('#F7B08A') },
       { y: 0.10, col: hexToRgb('#DE8A84') },
       { y: 0.25, col: hexToRgb('#B86382') },
       { y: 0.48, col: hexToRgb('#844278') },
       { y: 0.74, col: hexToRgb('#542964') },
-      { y: 1.00, col: hexToRgb('#311748') }, // calm soft dusk purple at bottom edge
+      { y: 1.00, col: hexToRgb('#311748') },
+    ]);
+
+    // 4. Night Vice City Sky + Wet Asphalt Canvas (Main Menu)
+    nightBgCanvas = document.createElement('canvas');
+    nightBgCanvas.width = W;
+    nightBgCanvas.height = H;
+    const nctx = nightBgCanvas.getContext('2d');
+    renderDitheredGradient(nctx, W, MENU_GROUND_Y, [
+      { y: 0.00, col: hexToRgb('#090316') },
+      { y: 0.25, col: hexToRgb('#15082E') },
+      { y: 0.55, col: hexToRgb('#280E47') },
+      { y: 0.80, col: hexToRgb('#431559') },
+      { y: 1.00, col: hexToRgb('#611B66') },
+    ]);
+    // Distant night skyline silhouettes behind the street
+    const farNightPts = [
+      [0, 32, 20], [22, 46, 18], [42, 26, 22], [148, 38, 22], [172, 50, 20], [194, 28, 26],
     ];
-    renderDitheredGradient(gctx, W, gh, stops);
-    return c;
-  })();
+    for (const [bx, bh, bw] of farNightPts) {
+      if (bx >= W) continue;
+      nctx.fillStyle = '#1E0B36';
+      nctx.fillRect(bx, MENU_GROUND_Y - bh, bw, bh);
+      nctx.fillStyle = '#3B1657';
+      nctx.fillRect(bx, MENU_GROUND_Y - bh, bw, 1);
+      for (let wy = MENU_GROUND_Y - bh + 5; wy < MENU_GROUND_Y - 6; wy += 6) {
+        for (let wx = bx + 3; wx < bx + bw - 3; wx += 5) {
+          if (((wx * 11 + wy * 7) % 5) === 0) {
+            nctx.fillStyle = ((wx + wy) % 2 === 0) ? '#FF6CA8' : '#FFD166';
+            nctx.fillRect(wx, wy, 2, 2);
+          }
+        }
+      }
+    }
+    // Sidewalk & Wet Asphalt Road
+    const roadH = H - MENU_GROUND_Y;
+    const roadImg = document.createElement('canvas');
+    roadImg.width = W;
+    roadImg.height = roadH;
+    renderDitheredGradient(roadImg.getContext('2d'), W, roadH, [
+      { y: 0.00, col: hexToRgb('#3D204F') }, // curb highlight
+      { y: 0.05, col: hexToRgb('#2A133C') }, // sidewalk stone
+      { y: 0.14, col: hexToRgb('#180A26') }, // wet curb shadow
+      { y: 0.35, col: hexToRgb('#12071E') }, // wet asphalt
+      { y: 1.00, col: hexToRgb('#090312') },
+    ]);
+    nctx.drawImage(roadImg, 0, MENU_GROUND_Y);
+    // Crisp curb lines & sidewalk tiles
+    nctx.fillStyle = '#5B2D6E';
+    nctx.fillRect(0, MENU_GROUND_Y, W, 1);
+    nctx.fillStyle = '#140822';
+    nctx.fillRect(0, MENU_GROUND_Y + 7, W, 1);
+    for (let tx = 0; tx < W; tx += 22) {
+      nctx.fillStyle = 'rgba(20, 8, 34, 0.55)';
+      nctx.fillRect(tx, MENU_GROUND_Y + 1, 1, 6);
+    }
+    // Subtle street dashed center line
+    for (let lx = 8; lx < W; lx += 24) {
+      nctx.fillStyle = 'rgba(255, 180, 120, 0.22)';
+      nctx.fillRect(lx, MENU_GROUND_Y + 28, 12, 1);
+    }
 
-  const STARS = Array.from({ length: 20 }, (_, i) => ({
-    x: (i * 47 + 13) % (W - 6) + 3,
-    y: (i * 23 + 9) % 82 + 6,
-    phase: i * 0.9,
-    big: i % 5 === 0,
-  }));
+    // 5. Subtle Corner Vignette (cached once)
+    vignetteCanvas = document.createElement('canvas');
+    vignetteCanvas.width = W;
+    vignetteCanvas.height = H;
+    const vctx = vignetteCanvas.getContext('2d');
+    const vg = vctx.createRadialGradient(W / 2, H * 0.48, W * 0.34, W / 2, H * 0.5, H * 0.72);
+    vg.addColorStop(0, 'rgba(14, 6, 28, 0)');
+    vg.addColorStop(0.75, 'rgba(14, 6, 28, 0.06)');
+    vg.addColorStop(1, 'rgba(14, 6, 28, 0.28)');
+    vctx.fillStyle = vg;
+    vctx.fillRect(0, 0, W, H);
+  }
 
   // ============================================================
-  // DELICATE HORIZON SKYLINE & PALMS
+  // MULTI-LAYER PARALLAX CITY (FAR HAZY + MID DETAILED + NEON)
   // ============================================================
-  const SKYLINE_W = 260;
-  const skylineCanvas = (function buildSkyline() {
+  const FAR_SKY_W = 280;
+  const farSkylineCanvas = (function buildFarSkyline() {
     const c = document.createElement('canvas');
-    c.width = SKYLINE_W;
-    c.height = 48;
+    c.width = FAR_SKY_W;
+    c.height = 56;
     const sctx = c.getContext('2d');
-    const buildings = [
-      { x: 0, w: 22, h: 20, spire: false, deco: true },
-      { x: 24, w: 18, h: 30, spire: true, deco: false },
-      { x: 44, w: 26, h: 18, spire: false, deco: true },
-      { x: 72, w: 20, h: 34, spire: true, deco: true },
-      { x: 94, w: 16, h: 15, spire: false, deco: false },
-      { x: 112, w: 28, h: 26, spire: false, deco: true },
-      { x: 142, w: 18, h: 38, spire: true, deco: true },
-      { x: 162, w: 24, h: 20, spire: false, deco: false },
-      { x: 188, w: 22, h: 30, spire: false, deco: true },
-      { x: 212, w: 20, h: 17, spire: false, deco: false },
-      { x: 234, w: 24, h: 25, spire: true, deco: true },
+    const towers = [
+      { x: 0, w: 26, h: 28 }, { x: 28, w: 20, h: 42 }, { x: 50, w: 30, h: 24 },
+      { x: 82, w: 22, h: 48 }, { x: 106, w: 24, h: 32 }, { x: 132, w: 28, h: 40 },
+      { x: 162, w: 20, h: 26 }, { x: 184, w: 26, h: 50 }, { x: 212, w: 22, h: 30 },
+      { x: 236, w: 24, h: 36 }, { x: 262, w: 18, h: 22 },
     ];
-    for (const b of buildings) {
-      const top = 48 - b.h;
-      sctx.fillStyle = '#92457D';
+    for (const b of towers) {
+      const top = 56 - b.h;
+      sctx.fillStyle = '#C75889'; // Low-contrast rose-plum haze
       sctx.fillRect(b.x, top, b.w, b.h);
-      sctx.fillStyle = '#B25C95';
+      sctx.fillStyle = '#E47B9E';
       sctx.fillRect(b.x, top, b.w, 1);
-      if (b.deco) {
-        sctx.fillStyle = '#92457D';
-        sctx.fillRect(b.x + 3, top - 3, b.w - 6, 3);
-      }
-      if (b.spire) {
-        sctx.fillStyle = '#A04E89';
-        sctx.fillRect(b.x + Math.floor(b.w / 2), top - 7, 1, 7);
-      }
-      for (let wy = top + 5; wy < 44; wy += 5) {
+      sctx.fillStyle = '#DF6D96';
+      sctx.fillRect(b.x + 2, top - 2, b.w - 4, 2);
+      for (let wy = top + 6; wy < 50; wy += 6) {
         for (let wx = b.x + 4; wx < b.x + b.w - 4; wx += 5) {
-          if (((wx * 7 + wy * 13) % 6) === 0) {
-            sctx.fillStyle = ((wx + wy) % 3 === 0) ? '#FF9CC2' : '#FFE082';
-            sctx.fillRect(wx, wy, 2, 2);
+          if (((wx * 5 + wy * 11) % 7) === 0) {
+            sctx.fillStyle = '#F7A4BD';
+            sctx.fillRect(wx, wy, 2, 1);
           }
         }
       }
@@ -312,14 +391,100 @@
     return c;
   })();
 
-  const PALM_SPRITE = (function buildPalm() {
+  const MID_SKY_W = 340;
+  const MID_BLINKERS = [];
+  const MID_FLICKER_WINDOWS = [];
+  const MID_NEON_SIGNS = [];
+
+  const midSkylineCanvas = (function buildMidSkyline() {
+    const c = document.createElement('canvas');
+    c.width = MID_SKY_W;
+    c.height = 64;
+    const sctx = c.getContext('2d');
+    const buildings = [
+      { x: 0, w: 24, h: 24, deco: true, spire: false, waterTower: true },
+      { x: 26, w: 20, h: 36, deco: false, spire: true, waterTower: false },
+      { x: 48, w: 30, h: 22, deco: true, spire: false, neon: 'MH' },
+      { x: 80, w: 22, h: 44, deco: true, spire: true, waterTower: false },
+      { x: 104, w: 18, h: 18, deco: false, spire: false, ac: true },
+      { x: 124, w: 30, h: 30, deco: true, spire: false, hotelStrip: true },
+      { x: 156, w: 20, h: 48, deco: true, spire: true, waterTower: false },
+      { x: 178, w: 26, h: 24, deco: false, spire: false, waterTower: true },
+      { x: 206, w: 24, h: 34, deco: true, spire: false, ac: true },
+      { x: 232, w: 22, h: 20, deco: false, spire: false, neon: 'PALM' },
+      { x: 256, w: 26, h: 40, deco: true, spire: true, waterTower: false },
+      { x: 284, w: 24, h: 26, deco: false, spire: false, ac: true },
+      { x: 310, w: 28, h: 32, deco: true, spire: false, waterTower: false },
+    ];
+    for (const b of buildings) {
+      const top = 64 - b.h;
+      sctx.fillStyle = '#75316C';
+      sctx.fillRect(b.x, top, b.w, b.h);
+      sctx.fillStyle = '#974786';
+      sctx.fillRect(b.x, top, b.w, 1);
+      // Subtle side shading
+      sctx.fillStyle = '#62275B';
+      sctx.fillRect(b.x + b.w - 3, top + 1, 3, b.h - 1);
+
+      if (b.deco) {
+        sctx.fillStyle = '#75316C';
+        sctx.fillRect(b.x + 3, top - 3, b.w - 6, 3);
+        sctx.fillStyle = '#9E4D8D';
+        sctx.fillRect(b.x + 3, top - 3, b.w - 6, 1);
+      }
+      if (b.waterTower) {
+        const tx = b.x + 5;
+        sctx.fillStyle = '#592353';
+        sctx.fillRect(tx + 1, top - 5, 1, 5);
+        sctx.fillRect(tx + 6, top - 5, 1, 5);
+        sctx.fillStyle = '#7E3774';
+        sctx.fillRect(tx, top - 10, 8, 5);
+        sctx.fillStyle = '#9E4D8D';
+        sctx.fillRect(tx + 1, top - 11, 6, 1);
+      }
+      if (b.ac) {
+        sctx.fillStyle = '#60255A';
+        sctx.fillRect(b.x + 4, top - 3, 6, 3);
+      }
+      if (b.spire) {
+        const sx = b.x + Math.floor(b.w / 2);
+        const sy = top - 10;
+        sctx.fillStyle = '#8F4382';
+        sctx.fillRect(sx, sy, 1, 10);
+        MID_BLINKERS.push({ x: sx, y: sy, phase: b.x * 0.13 });
+      }
+      if (b.hotelStrip) {
+        sctx.fillStyle = '#FF9CC2';
+        sctx.fillRect(b.x + 3, top + 4, 2, b.h - 8);
+      }
+      if (b.neon === 'MH') {
+        MID_NEON_SIGNS.push({ x: b.x + 4, y: top - 10, w: 20, h: 7, kind: 'MH' });
+        sctx.fillStyle = '#4A1B47';
+        sctx.fillRect(b.x + 6, top - 4, 1, 4);
+        sctx.fillRect(b.x + 21, top - 4, 1, 4);
+      } else if (b.neon === 'PALM') {
+        MID_NEON_SIGNS.push({ x: b.x + 3, y: top + 4, w: 14, h: 5, kind: 'BAR' });
+      }
+
+      for (let wy = top + 5; wy < 60; wy += 5) {
+        for (let wx = b.x + 4; wx < b.x + b.w - 5; wx += 5) {
+          const hash = (wx * 7 + wy * 13) % 7;
+          if (hash === 0 || hash === 3) {
+            sctx.fillStyle = ((wx + wy) % 3 === 0) ? '#FF9CC2' : '#FFE082';
+            sctx.fillRect(wx, wy, 2, 2);
+            if (hash === 3) {
+              MID_FLICKER_WINDOWS.push({ x: wx, y: wy, phase: (wx + wy) * 0.7 });
+            }
+          }
+        }
+      }
+    }
+    return c;
+  })();
+
+  // Swaying Palm Silhouettes (cached trunk + 3-frame canopy)
+  const PALM_TRUNK = (function () {
     const rows = [
-      '.....GGGGGG..GGGGGG.....',
-      '...GGGGGGGGGGGGGGGGGG...',
-      '.GGGG..GGGGGGGGGG..GGGG.',
-      'GGG....GGGGGGGGGG....GGG',
-      '.......GGG.GG.GGG.......',
-      '......GGG..GG..GGG......',
       '...........GG...........',
       '...........GG...........',
       '..........GGG...........',
@@ -341,11 +506,138 @@
     return bakeSprite(rows, { '.': null, 'G': '#5A255E' });
   })();
 
+  const PALM_FRONDS = [
+    bakeSprite([
+      '.....GGGGGG..GGGGGG.....',
+      '...GGGGGGGGGGGGGGGGGG...',
+      '.GGGG..GGGGGGGGGG..GGGG.',
+      'GGG....GGGGGGGGGG....GGG',
+      '.......GGG.GG.GGG.......',
+      '......GGG..GG..GGG......',
+    ], { '.': null, 'G': '#682C6B' }),
+    bakeSprite([
+      '....GGGGGG...GGGGGG.....',
+      '..GGGGGGGGGGGGGGGGGGG...',
+      'GGGG...GGGGGGGGGG...GGG.',
+      'GG.....GGGGGGGGGG.....GG',
+      '......GGG..GG..GGG......',
+      '.....GGG...GG...GGG.....',
+    ], { '.': null, 'G': '#682C6B' }),
+    bakeSprite([
+      '......GGGGGG..GGGGGG....',
+      '....GGGGGGGGGGGGGGGGGG..',
+      '..GGGG..GGGGGGGGGG..GGGG',
+      '.GGG....GGGGGGGGGG....GG',
+      '........GGG.GG.GGG......',
+      '.......GGG..GG..GGG.....',
+    ], { '.': null, 'G': '#682C6B' }),
+  ];
+
   // ============================================================
-  // HAT ANCHOR TABLE (sleek 10x6 Santa Hat)
+  // PIXEL NEON SIGN GLYPHS (MUSTHAVE RUN) FOR NIGHT MENU
+  // ============================================================
+  const NEON_GLYPHS = {
+    M: ['K...K', 'KK.KK', 'K.K.K', 'K...K', 'K...K', 'K...K', 'K...K'],
+    U: ['K...K', 'K...K', 'K...K', 'K...K', 'K...K', 'K...K', '.KKK.'],
+    S: ['.KKKK', 'K....', 'K....', '.KKK.', '....K', '....K', 'KKKK.'],
+    T: ['KKKKK', '..K..', '..K..', '..K..', '..K..', '..K..', '..K..'],
+    H: ['K...K', 'K...K', 'K...K', 'KKKKK', 'K...K', 'K...K', 'K...K'],
+    A: ['.KKK.', 'K...K', 'K...K', 'KKKKK', 'K...K', 'K...K', 'K...K'],
+    V: ['K...K', 'K...K', 'K...K', 'K...K', 'K...K', '.K.K.', '..K..'],
+    E: ['KKKKK', 'K....', 'K....', 'KKKK.', 'K....', 'K....', 'KKKKK'],
+    R: ['KKKK.', 'K...K', 'K...K', 'KKKK.', 'K.K..', 'K..K.', 'K...K'],
+    N: ['K...K', 'KK..K', 'K.K.K', 'K..KK', 'K...K', 'K...K', 'K...K'],
+  };
+
+  function drawNeonGlyph(targetCtx, ch, x, y, scale, tubeCol, coreCol, glowCol, brightness) {
+    const g = NEON_GLYPHS[ch];
+    if (!g) return;
+    if (brightness <= 0.08) {
+      // Unlit dark glass tube
+      targetCtx.fillStyle = 'rgba(65, 28, 72, 0.72)';
+      for (let r = 0; r < g.length; r++) {
+        for (let c = 0; c < g[r].length; c++) {
+          if (g[r][c] === 'K') targetCtx.fillRect(x + c * scale, y + r * scale, scale, scale);
+        }
+      }
+      return;
+    }
+
+    targetCtx.save();
+    targetCtx.globalAlpha = Math.min(1, brightness);
+
+    // Outer colored tube + crisp white-hot inner core
+    for (let r = 0; r < g.length; r++) {
+      for (let c = 0; c < g[r].length; c++) {
+        if (g[r][c] === 'K') {
+          const px = x + c * scale;
+          const py = y + r * scale;
+          targetCtx.fillStyle = tubeCol;
+          targetCtx.fillRect(px - 1, py, scale + 2, scale);
+          targetCtx.fillRect(px, py - 1, scale, scale + 2);
+        }
+      }
+    }
+    for (let r = 0; r < g.length; r++) {
+      for (let c = 0; c < g[r].length; c++) {
+        if (g[r][c] === 'K') {
+          targetCtx.fillStyle = coreCol;
+          targetCtx.fillRect(x + c * scale, y + r * scale, scale, scale);
+        }
+      }
+    }
+    targetCtx.restore();
+  }
+
+
+  const MINI_3X5 = {
+    M: ['K.K', 'KKK', 'K.K', 'K.K', 'K.K'],
+    A: ['.K.', 'K.K', 'KKK', 'K.K', 'K.K'],
+    N: ['K.K', 'KKK', 'KKK', 'K.K', 'K.K'],
+    G: ['.KK', 'K..', 'K.K', 'K.K', '.KK'],
+    O: ['.K.', 'K.K', 'K.K', 'K.K', '.K.'],
+    P: ['KK.', 'K.K', 'KK.', 'K..', 'K..'],
+    E: ['KKK', 'K..', 'KK.', 'K..', 'KKK'],
+    C: ['.KK', 'K..', 'K..', 'K..', '.KK'],
+    H: ['K.K', 'K.K', 'KKK', 'K.K', 'K.K'],
+    I: ['KKK', '.K.', '.K.', '.K.', 'KKK'],
+    L: ['K..', 'K..', 'K..', 'K..', 'KKK'],
+    '.': ['...', '...', '.K.', '...', '...'],
+    ' ': ['...', '...', '...', '...', '...'],
+  };
+
+  function drawMiniNeonFlavors(targetCtx, cx, y) {
+    const segs = [
+      { text: 'MANGO', col: '#FF9E1B' },
+      { text: ' . ', col: '#FF85B3' },
+      { text: 'PEACH', col: '#FF8066' },
+      { text: ' . ', col: '#FF85B3' },
+      { text: 'PINEAPPLE', col: '#FFD100' },
+    ];
+    const totalChars = segs.reduce((acc, s) => acc + s.text.length, 0);
+    let x = cx - Math.floor((totalChars * 4 - 1) / 2);
+    for (const seg of segs) {
+      targetCtx.fillStyle = seg.col;
+      for (const ch of seg.text) {
+        const g = MINI_3X5[ch];
+        if (g) {
+          for (let r = 0; r < 5; r++) {
+            for (let c = 0; c < 3; c++) {
+              if (g[r][c] === 'K') targetCtx.fillRect(x + c, y + r, 1, 1);
+            }
+          }
+        }
+        x += 4;
+      }
+    }
+  }
+
+  // ============================================================
+  // HAT ANCHOR TABLE
   // ============================================================
   const HAT_ANCHORS = {
     hero: { x: 14, y: -2 },
+    heroWag: { x: 14, y: -2 },
     front: { x: 6, y: -3 },
     backA: { x: 5, y: -3 },
     backB: { x: 5, y: -3 },
@@ -399,35 +691,69 @@
       );
     }
 
-    // Signature cute butt-wiggle motion ticks on peak run frames
-    if (poseKey === 'run0' || poseKey === 'run2') {
-      const wy = poseKey === 'run0' ? py + 6 * scale : py + 2 * scale;
+    if (poseKey === 'run0' || poseKey === 'run2' || poseKey === 'heroWag') {
+      const wy = poseKey === 'run0' ? py + 6 * scale : poseKey === 'heroWag' ? py + 9 * scale : py + 2 * scale;
+      const wx = poseKey === 'heroWag' ? px - 2 * scale : px - 3 * scale;
       targetCtx.fillStyle = '#FFF9F2';
-      targetCtx.fillRect(px - 3 * scale, wy, 2 * scale, 1 * scale);
+      targetCtx.fillRect(wx, wy, 2 * scale, 1 * scale);
       targetCtx.fillStyle = '#FF4A8D';
-      targetCtx.fillRect(px - 4 * scale, wy + 2 * scale, 2 * scale, 1 * scale);
+      targetCtx.fillRect(wx - 1 * scale, wy + 2 * scale, 2 * scale, 1 * scale);
     }
   }
 
   // ============================================================
-  // GAME STATE
+  // GAME & AMBIENT WORLD STATE
   // ============================================================
   let mode = 'menu';
   let prevModeBeforeRating = 'menu';
 
-  const CORGI_GROUND_TOP = GROUND_Y - 18; // 252 - 17 = 235
+  const STARS = Array.from({ length: 28 }, (_, i) => ({
+    x: (i * 53 + 11) % 240 + 4,
+    y: (i * 29 + 7) % 86 + 6,
+    phase: i * 0.85,
+    big: i % 6 === 0,
+  }));
 
   const WORLD = {
     time: 0,
+    menuTime: 0,
+    transitionAlpha: 0,
+    scrollFarSky: 0,
     scrollSkyline: 0,
     scrollPalms: 0,
     scrollGround: 0,
     clouds: [
-      { x: 14, y: 66, speed: 5.5, kind: 'small' },
-      { x: 82, y: 92, speed: 4.0, kind: 'large' },
-      { x: 146, y: 58, speed: 6.5, kind: 'small' },
-      { x: 178, y: 118, speed: 4.8, kind: 'small' },
+      { x: 18, y: 38, speed: 2.3, kind: 'wisp' },
+      { x: 132, y: 48, speed: 2.8, kind: 'wisp' },
+      { x: 24, y: 74, speed: 5.2, kind: 'small' },
+      { x: 148, y: 62, speed: 5.8, kind: 'small' },
+      { x: 86, y: 98, speed: 7.4, kind: 'large' },
     ],
+    birds: [
+      // Far flock (3 seagulls)
+      { x: 46, y: 58, speed: 12, depth: 'far', phase: 0.0 },
+      { x: 37, y: 54, speed: 12, depth: 'far', phase: 1.4 },
+      { x: 38, y: 63, speed: 12, depth: 'far', phase: 2.5 },
+      // Closer gliding pair
+      { x: 158, y: 84, speed: 18, depth: 'near', phase: 0.7 },
+      { x: 170, y: 89, speed: 18, depth: 'near', phase: 2.2 },
+    ],
+    skyCraft: { x: 168, y: 42, kind: 'blimp', speed: 6.5, cooldown: 0 },
+    shootingStar: { active: false, x: 150, y: 20, vx: -72, vy: 28, life: 0, cooldown: 5.5 },
+    windStreaks: [],
+    windCooldown: 1.8,
+    petals: Array.from({ length: 8 }, (_, i) => ({
+      x: (i * 31) % 210,
+      y: 110 + (i * 23) % 120,
+      vx: -14 - (i % 3) * 4,
+      vy: 4 + (i % 2) * 3,
+      phase: i * 1.1,
+      color: i % 3 === 0 ? '#FFB7D5' : i % 3 === 1 ? '#FF9E6D' : '#FFD57A',
+    })),
+    // Night menu street ambients
+    steamPuffs: [],
+    steamTimer: 0,
+    carPass: { active: false, x: -40, dir: 1, cooldown: 2.0 },
     speed: 105,
     score: 0,
     runTime: 0,
@@ -443,6 +769,7 @@
       jumpBuffer: 0,
       animTimer: 0,
       runFrame: 0,
+      sparkleTimer: 0,
     },
     obstacles: [],
     fruits: [],
@@ -452,9 +779,38 @@
     dustTimer: 0,
   };
 
-  function updateHUDPills() {
+  function syncViewportSize() {
+    const sw = Math.max(300, stageEl.clientWidth || 390);
+    const sh = Math.max(480, stageEl.clientHeight || 844);
+    const pxScale = Math.max(2, Math.round(sw / 195));
+    const nextW = Math.max(168, Math.ceil(sw / pxScale));
+    const nextH = Math.max(280, Math.ceil(sh / pxScale));
+    if (nextW !== W || nextH !== H || !skyCanvas) {
+      W = nextW;
+      H = nextH;
+      GROUND_Y = Math.round(H * 0.60);
+      MENU_GROUND_Y = GROUND_Y;
+      CORGI_GROUND_TOP = GROUND_Y - 18;
+      canvas.width = W;
+      canvas.height = H;
+      ctx.imageSmoothingEnabled = false;
+      if (WORLD.corgi.grounded) WORLD.corgi.y = CORGI_GROUND_TOP;
+      rebuildStaticCanvases();
+    }
+  }
+
+  window.addEventListener('resize', syncViewportSize);
+  window.addEventListener('mh-viewport', syncViewportSize);
+  syncViewportSize();
+
+  function updateHUDPills(popScore = false) {
     hudScoreEl.textContent = String(WORLD.score);
     hudLivesEl.textContent = String(saveState.lives);
+    if (popScore) {
+      hudScorePill.classList.remove('score-pop');
+      void hudScorePill.offsetWidth;
+      hudScorePill.classList.add('score-pop');
+    }
   }
 
   function resetRunWorld() {
@@ -465,6 +821,7 @@
     WORLD.introSpinStep = -1;
     WORLD.shakeTime = 0;
     WORLD.hitFreeze = 0;
+    WORLD.transitionAlpha = 0.72;
     WORLD.corgi.x = 20;
     WORLD.corgi.y = CORGI_GROUND_TOP;
     WORLD.corgi.vy = 0;
@@ -472,29 +829,32 @@
     WORLD.corgi.jumpBuffer = 0;
     WORLD.corgi.animTimer = 0;
     WORLD.corgi.runFrame = 0;
+    WORLD.corgi.sparkleTimer = 0;
     WORLD.obstacles = [];
     WORLD.fruits = [];
     WORLD.particles = [];
     WORLD.popups = [];
     WORLD.spawnCooldown = 0.85;
     WORLD.dustTimer = 0;
-    updateHUDPills();
+    updateHUDPills(false);
   }
 
   // ============================================================
   // PARTICLES & POPUPS
   // ============================================================
-  function spawnDust(x, y, count = 4) {
+  function spawnDust(x, y, count = 4, spread = 1) {
     for (let i = 0; i < count; i++) {
+      const dir = spread > 1 && i % 2 === 1 ? 1 : -1;
       WORLD.particles.push({
-        x: x + (Math.random() - 0.5) * 6,
+        x: x + (Math.random() - 0.5) * 6 * spread,
         y: y - Math.random() * 3,
-        vx: -24 - Math.random() * 34,
-        vy: -10 - Math.random() * 22,
-        life: 0.25 + Math.random() * 0.2,
-        maxLife: 0.4,
-        size: Math.random() > 0.5 ? 2 : 1,
-        color: Math.random() > 0.4 ? '#FFF0E6' : '#FF8066',
+        vx: dir * (12 + Math.random() * 26) - (spread === 1 ? 14 : 0),
+        vy: -8 - Math.random() * 20,
+        life: 0.28 + Math.random() * 0.2,
+        maxLife: 0.48,
+        size: Math.random() > 0.55 ? 2 : 1,
+        color: Math.random() > 0.4 ? '#FFF0E6' : '#FFB3C6',
+        grav: 85,
       });
     }
   }
@@ -505,31 +865,32 @@
       : kind === 'peach'
         ? ['#FF8066', '#FF4A8D', '#FFD100']
         : ['#FF9E1B', '#FFD100', '#FFF9F2'];
-    for (let i = 0; i < 12; i++) {
-      const ang = (Math.PI * 2 * i) / 12 + Math.random() * 0.3;
-      const spd = 28 + Math.random() * 44;
+    for (let i = 0; i < 14; i++) {
+      const ang = (Math.PI * 2 * i) / 14 + Math.random() * 0.3;
+      const spd = 28 + Math.random() * 46;
       WORLD.particles.push({
         x,
         y,
         vx: Math.cos(ang) * spd,
         vy: Math.sin(ang) * spd - 12,
-        life: 0.34 + Math.random() * 0.18,
-        maxLife: 0.52,
+        life: 0.36 + Math.random() * 0.18,
+        maxLife: 0.54,
         size: i % 3 === 0 ? 2 : 1,
         color: palette[i % palette.length],
+        grav: 90,
       });
     }
     WORLD.popups.push({
       x,
       y: y - 4,
       text: '+1',
-      life: 0.7,
-      maxLife: 0.7,
+      life: 0.72,
+      maxLife: 0.72,
     });
   }
 
   // ============================================================
-  // OBSTACLE & FRUIT SPAWNER (1x airy Chrome-Dino proportions)
+  // OBSTACLE & FRUIT SPAWNER
   // ============================================================
   let lastObstacleKind = '';
   function spawnObstacleWave() {
@@ -595,7 +956,7 @@
     c.vy = -305;
     c.grounded = false;
     c.jumpBuffer = 0;
-    spawnDust(c.x + 12, GROUND_Y, 5);
+    spawnDust(c.x + 12, GROUND_Y, 6, 1.4);
     MH_AUDIO.jump();
     MH_TG.haptic('light');
   }
@@ -661,7 +1022,13 @@
     hudPills.classList.add('hidden');
 
     if (name === 'menu') {
+      const wasMenu = mode === 'menu' || mode === 'sub' || mode === 'rating';
       mode = 'menu';
+      if (!wasMenu) {
+        WORLD.menuTime = 0;
+        WORLD.transitionAlpha = 0.55;
+      }
+      MH_TG.setChromeTheme('night');
       refreshStartUI();
       screenStart.classList.remove('hidden');
       topControls.classList.remove('hidden');
@@ -672,6 +1039,7 @@
       screenSub.classList.remove('hidden');
     } else if (name === 'intro') {
       mode = 'intro';
+      MH_TG.setChromeTheme('sunset');
       resetRunWorld();
       hudPills.classList.remove('hidden');
     } else if (name === 'gameover') {
@@ -861,17 +1229,8 @@
   // UPDATE LOOP
   // ============================================================
   const INTRO_SPIN_POSES = [
-    'backA',
-    'backRight',
-    'sideRight',
-    'frontRight',
-    'front',
-    'frontLeft',
-    'sideLeft',
-    'backLeft',
-    'backA',
-    'backRight',
-    'sideRight',
+    'backA', 'backRight', 'sideRight', 'frontRight', 'front',
+    'frontLeft', 'sideLeft', 'backLeft', 'backA', 'backRight', 'sideRight',
   ];
 
   function getIntroPose(t) {
@@ -886,13 +1245,143 @@
     return 'crouch';
   }
 
+  function updateAmbientSky(dt, mult) {
+    // 3-speed clouds
+    for (const cl of WORLD.clouds) {
+      cl.x -= cl.speed * mult * dt;
+      if (cl.x < -38) cl.x = W + 12;
+    }
+
+    // Flocks of birds at 2 parallax depths
+    for (const b of WORLD.birds) {
+      const bSpeed = b.speed * (mode === 'playing' ? 1.25 : 1);
+      b.x -= bSpeed * dt;
+      if (b.x < -14) {
+        b.x = W + 16 + (b.phase * 11) % 36;
+      }
+    }
+
+    // Distant passing blimp / plane
+    const sc = WORLD.skyCraft;
+    if (sc.cooldown > 0) {
+      sc.cooldown -= dt;
+    } else {
+      sc.x -= sc.speed * dt;
+      if (sc.x < -28) {
+        sc.kind = sc.kind === 'blimp' ? 'plane' : 'blimp';
+        sc.x = W + 24;
+        sc.y = sc.kind === 'blimp' ? 40 : 54;
+        sc.speed = sc.kind === 'blimp' ? 5.5 : 14;
+        sc.cooldown = 10;
+      }
+    }
+
+    // Occasional shooting star
+    const ss = WORLD.shootingStar;
+    if (ss.active) {
+      ss.x += ss.vx * dt;
+      ss.y += ss.vy * dt;
+      ss.life -= dt;
+      if (ss.life <= 0) {
+        ss.active = false;
+        ss.cooldown = 8 + Math.random() * 6;
+      }
+    } else {
+      ss.cooldown -= dt;
+      if (ss.cooldown <= 0) {
+        ss.active = true;
+        ss.x = W * (0.55 + Math.random() * 0.4);
+        ss.y = 10 + Math.random() * 28;
+        ss.life = 0.55;
+      }
+    }
+
+    // Wind streaks
+    WORLD.windCooldown -= dt;
+    if (WORLD.windCooldown <= 0) {
+      WORLD.windCooldown = 1.4 + Math.random() * 1.8;
+      WORLD.windStreaks.push({
+        x: W + 10,
+        y: Math.round(GROUND_Y * 0.38 + Math.random() * (GROUND_Y * 0.52)),
+        len: 10 + Math.floor(Math.random() * 12),
+        speed: 130 + Math.random() * 55,
+      });
+    }
+    for (let i = WORLD.windStreaks.length - 1; i >= 0; i--) {
+      const ws = WORLD.windStreaks[i];
+      ws.x -= ws.speed * dt;
+      if (ws.x + ws.len < -4) WORLD.windStreaks.splice(i, 1);
+    }
+
+    // Drifting blossom petals / leaves
+    for (const pt of WORLD.petals) {
+      pt.x += (pt.vx - (mode === 'playing' ? WORLD.speed * 0.18 : 0)) * dt;
+      pt.y += (pt.vy + Math.sin(WORLD.time * 3.5 + pt.phase) * 7) * dt;
+      if (pt.x < -6) {
+        pt.x = W + 6 + Math.random() * 24;
+        pt.y = GROUND_Y - 12 - Math.random() * 110;
+      }
+      if (pt.y > GROUND_Y + 6) {
+        pt.y = GROUND_Y - 110;
+      }
+    }
+  }
+
+  function updateMenuStreet(dt) {
+    WORLD.menuTime += dt;
+
+    // Street steam grate puffs
+    WORLD.steamTimer += dt;
+    if (WORLD.steamTimer >= 0.28) {
+      WORLD.steamTimer = 0;
+      WORLD.steamPuffs.push({
+        x: Math.round(W * 0.5) + 34 + (Math.random() - 0.5) * 4,
+        y: MENU_GROUND_Y + 2,
+        vx: -4 - Math.random() * 4,
+        vy: -13 - Math.random() * 8,
+        life: 1.1,
+        maxLife: 1.1,
+      });
+    }
+    for (let i = WORLD.steamPuffs.length - 1; i >= 0; i--) {
+      const sp = WORLD.steamPuffs[i];
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.life -= dt;
+      if (sp.life <= 0) WORLD.steamPuffs.splice(i, 1);
+    }
+
+    // Passing headlights along wet road
+    const cp = WORLD.carPass;
+    if (!cp.active) {
+      cp.cooldown -= dt;
+      if (cp.cooldown <= 0) {
+        cp.active = true;
+        cp.dir = Math.random() > 0.3 ? 1 : -1;
+        cp.x = cp.dir > 0 ? -42 : W + 42;
+        cp.cooldown = 3.8 + Math.random() * 3.0;
+      }
+    } else {
+      cp.x += cp.dir * 135 * dt;
+      if ((cp.dir > 0 && cp.x > W + 54) || (cp.dir < 0 && cp.x < -54)) {
+        cp.active = false;
+      }
+    }
+
+    // Corgi runs around the corner into position (0..1.05s)
+    if (WORLD.menuTime < 1.05 && Math.floor(WORLD.menuTime * 8) !== Math.floor((WORLD.menuTime - dt) * 8)) {
+      const cx = Math.round(W * 0.5) - 46;
+      const tNorm = WORLD.menuTime / 1.05;
+      const runX = -26 + (cx + 26) * tNorm;
+      spawnDust(runX + 6, MENU_GROUND_Y, 2, 1);
+    }
+    updateParticles(dt);
+  }
+
   function update(dt) {
     WORLD.time += dt;
-
-    for (const cl of WORLD.clouds) {
-      const mult = mode === 'playing' ? 1.8 : 1;
-      cl.x -= cl.speed * mult * dt;
-      if (cl.x < -34) cl.x = W + 10;
+    if (WORLD.transitionAlpha > 0) {
+      WORLD.transitionAlpha = Math.max(0, WORLD.transitionAlpha - dt * 1.9);
     }
 
     if (saveState.lives <= 0) {
@@ -901,12 +1390,23 @@
       if (mode === 'gameover') goTimer.textContent = rem;
     }
 
-    if (mode === 'menu') {
-      WORLD.scrollSkyline = (WORLD.scrollSkyline + 4 * dt) % SKYLINE_W;
-      WORLD.scrollPalms = (WORLD.scrollPalms + 10 * dt) % 140;
-      WORLD.scrollGround = (WORLD.scrollGround + 14 * dt) % 48;
+    if (mode === 'menu' || mode === 'sub' || mode === 'rating') {
+      updateMenuStreet(dt);
+      // Shooting star in night menu sky too
+      const ss = WORLD.shootingStar;
+      if (ss.active) {
+        ss.x += ss.vx * dt;
+        ss.y += ss.vy * dt;
+        ss.life -= dt;
+        if (ss.life <= 0) { ss.active = false; ss.cooldown = 7; }
+      } else {
+        ss.cooldown -= dt;
+        if (ss.cooldown <= 0) { ss.active = true; ss.x = W * 0.78; ss.y = 14; ss.life = 0.5; }
+      }
       return;
     }
+
+    updateAmbientSky(dt, mode === 'playing' ? 1.55 : 1);
 
     if (mode === 'intro') {
       WORLD.introTime += dt;
@@ -914,12 +1414,12 @@
       const step = Math.floor((t - 0.62) / 0.085);
       if (t >= 0.62 && t < 1.52 && step !== WORLD.introSpinStep) {
         WORLD.introSpinStep = step;
-        spawnDust(WORLD.corgi.x + 12, GROUND_Y, 2);
+        spawnDust(WORLD.corgi.x + 12, GROUND_Y, 2, 1);
         MH_AUDIO.spin();
       }
       if (t >= 1.52 && WORLD.introSpinStep !== 999) {
         WORLD.introSpinStep = 999;
-        spawnDust(WORLD.corgi.x + 12, GROUND_Y, 5);
+        spawnDust(WORLD.corgi.x + 12, GROUND_Y, 5, 1.3);
         MH_AUDIO.ready();
       }
       if (t >= 2.02) {
@@ -944,8 +1444,9 @@
     WORLD.runTime += dt;
     WORLD.speed = Math.min(220, 105 + WORLD.runTime * 2.1);
 
-    WORLD.scrollSkyline = (WORLD.scrollSkyline + WORLD.speed * 0.14 * dt) % SKYLINE_W;
-    WORLD.scrollPalms = (WORLD.scrollPalms + WORLD.speed * 0.36 * dt) % 140;
+    WORLD.scrollFarSky = (WORLD.scrollFarSky + WORLD.speed * 0.065 * dt) % FAR_SKY_W;
+    WORLD.scrollSkyline = (WORLD.scrollSkyline + WORLD.speed * 0.14 * dt) % MID_SKY_W;
+    WORLD.scrollPalms = (WORLD.scrollPalms + WORLD.speed * 0.34 * dt) % 140;
     WORLD.scrollGround = (WORLD.scrollGround + WORLD.speed * dt) % 48;
 
     if (autoJump && WORLD.corgi.grounded) {
@@ -965,11 +1466,27 @@
     if (!c.grounded) {
       c.vy += 740 * dt;
       c.y += c.vy * dt;
+      // Airborne jump sparkle trail
+      c.sparkleTimer += dt;
+      if (c.sparkleTimer >= 0.048) {
+        c.sparkleTimer = 0;
+        WORLD.particles.push({
+          x: c.x + 4 + Math.random() * 6,
+          y: c.y + 11 + Math.random() * 4,
+          vx: -28 - Math.random() * 14,
+          vy: 4 + Math.random() * 10,
+          life: 0.22,
+          maxLife: 0.22,
+          size: 1,
+          color: Math.random() > 0.45 ? '#FFD100' : '#FF85B3',
+          grav: 15,
+        });
+      }
       if (c.y >= CORGI_GROUND_TOP) {
         c.y = CORGI_GROUND_TOP;
         c.vy = 0;
         c.grounded = true;
-        spawnDust(c.x + 14, GROUND_Y, 5);
+        spawnDust(c.x + 14, GROUND_Y, 7, 1.8);
       }
     } else {
       c.animTimer += dt * (12.5 + (WORLD.speed - 105) * 0.05);
@@ -977,7 +1494,7 @@
       WORLD.dustTimer += dt;
       if (WORLD.dustTimer >= 0.16) {
         WORLD.dustTimer = 0;
-        spawnDust(c.x + 5, GROUND_Y, 2);
+        spawnDust(c.x + 5, GROUND_Y, 2, 1);
       }
     }
 
@@ -1021,7 +1538,7 @@
       if (cx1 - 2 < f.x + f.w && cx2 + 2 > f.x && cy1 - 3 < fy + f.h && cy2 > fy) {
         f.collected = true;
         WORLD.score += 1;
-        updateHUDPills();
+        updateHUDPills(true);
         spawnFruitSparkles(f.x + f.w / 2, fy + f.h / 2, f.kind);
         MH_AUDIO.fruit();
         MH_TG.haptic('light');
@@ -1037,13 +1554,13 @@
       const p = WORLD.particles[i];
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      p.vy += 90 * dt;
+      p.vy += (p.grav !== undefined ? p.grav : 90) * dt;
       p.life -= dt;
       if (p.life <= 0) WORLD.particles.splice(i, 1);
     }
     for (let i = WORLD.popups.length - 1; i >= 0; i--) {
       const pop = WORLD.popups[i];
-      pop.y -= 24 * dt;
+      pop.y -= 26 * dt;
       pop.life -= dt;
       if (pop.life <= 0) WORLD.popups.splice(i, 1);
     }
@@ -1060,50 +1577,339 @@
     }
     saveState.gamesPlayed += 1;
     MH_STORAGE.spendLife(saveState);
-    updateHUDPills();
+    updateHUDPills(false);
     MH_TG.submitScore(WORLD.score).catch(() => {});
   }
 
   // ============================================================
-  // RENDERING — Airy Vice City Sky + Soft Gradient Sand/Road Below
+  // NIGHT VICE CITY NEON STREET MENU RENDERER
   // ============================================================
-  function drawSoftGround(groundY, isMenu) {
-    // Soft sunset-tinted gradient continuing cleanly down (no harsh black band)
-    ctx.drawImage(groundBgCanvas, 0, groundY);
+  function drawSwayingPalm(x, bottomY, scale, phaseOffset) {
+    const sw = Math.sin(WORLD.time * 2.1 + phaseOffset);
+    const frondIdx = sw < -0.35 ? 1 : sw > 0.35 ? 2 : 0;
+    const fSpr = PALM_FRONDS[frondIdx];
+    const tSpr = PALM_TRUNK;
+    ctx.drawImage(tSpr, Math.round(x), Math.round(bottomY - tSpr.height * scale), tSpr.width * scale, tSpr.height * scale);
+    ctx.drawImage(
+      fSpr,
+      Math.round(x + (sw > 0.35 ? 1 : sw < -0.35 ? -1 : 0)),
+      Math.round(bottomY - (tSpr.height + fSpr.height - 1) * scale),
+      fSpr.width * scale,
+      fSpr.height * scale
+    );
+  }
 
-    // Crisp Chrome-Dino horizon line with subtle notches
-    const gx = Math.round(WORLD.scrollGround);
-    ctx.fillStyle = '#140C1C';
-    ctx.fillRect(0, groundY, W, 2);
+  function renderNightMenuScene() {
+    ctx.drawImage(nightBgCanvas, 0, 0);
 
-    // Horizon pixel notches & gentle sand/road texture continuing down
-    for (let x = -gx; x < W; x += 48) {
-      // Little ground bump on horizon line (like 6_scale_reference.png!)
-      ctx.fillStyle = '#140C1C';
-      ctx.fillRect(x + 12, groundY - 1, 4, 1);
-      ctx.fillRect(x + 34, groundY - 1, 2, 1);
-
-      // Subtle warm highlight & scrolling road/sand pebbles at multiple depths
-      ctx.fillStyle = '#FFD59E';
-      ctx.fillRect(x + 4, groundY + 2, 10, 1);
-      ctx.fillRect(x + 28, groundY + 2, 6, 1);
-
-      ctx.fillStyle = '#8F4270';
-      ctx.fillRect(x + 8, groundY + 9, 5, 1);
-      ctx.fillRect(x + 26, groundY + 14, 2, 1);
-      ctx.fillRect(x + 38, groundY + 22, 6, 1);
-
-      ctx.fillStyle = '#6A2E5C';
-      ctx.fillRect(x + 16, groundY + 34, 8, 1);
-      ctx.fillRect(x + 3, groundY + 48, 3, 1);
-      ctx.fillRect(x + 30, groundY + 62, 5, 1);
-
-      ctx.fillStyle = '#4E224F';
-      ctx.fillRect(x + 10, groundY + 86, 7, 1);
-      ctx.fillRect(x + 34, groundY + 102, 4, 1);
+    // Twinkling night stars
+    for (const s of STARS) {
+      if (s.x >= W - 3 || s.y >= MENU_GROUND_Y - 82) continue;
+      const pulse = Math.sin(WORLD.time * 2.3 + s.phase);
+      if (pulse > -0.25) {
+        ctx.fillStyle = pulse > 0.65 ? '#FFF9F2' : '#C9B3FF';
+        ctx.fillRect(s.x, s.y, s.big ? 2 : 1, s.big ? 2 : 1);
+      }
     }
 
-    if (!isMenu && mode === 'playing' && WORLD.runTime < 3.5) {
+    // Shooting star
+    if (WORLD.shootingStar.active) {
+      const ss = WORLD.shootingStar;
+      for (let t = 0; t < 5; t++) {
+        ctx.fillStyle = t === 0 ? '#FFF9F2' : `rgba(255, 160, 215, ${(0.8 - t * 0.16).toFixed(2)})`;
+        ctx.fillRect(Math.round(ss.x + t * 2.2), Math.round(ss.y - t * 0.9), 1, 1);
+      }
+    }
+
+    // Glowing pastel crescent moon in upper-right night sky
+    const mx = W - 28;
+    const my = Math.max(22, Math.min(42, MENU_GROUND_Y - 178));
+    ctx.drawImage(MH_SPRITES.ambient.moon, mx, my);
+
+    // Swaying night palms flanking the street
+    drawSwayingPalm(W - 36, MENU_GROUND_Y, 1.5, 0.5);
+    drawSwayingPalm(-4, MENU_GROUND_Y, 1.25, 2.1);
+
+    const cx = Math.round(W * 0.5);
+    const mt = WORLD.menuTime;
+
+    // Vice City corner storefront building (dark alcove behind corgi on left, lit shop window on right!)
+    const bH = Math.min(92, Math.max(72, MENU_GROUND_Y - 104));
+    const bW = Math.min(132, W - 36);
+    const bX = cx - Math.floor(bW / 2) + 4;
+    const bTop = MENU_GROUND_Y - bH;
+    ctx.fillStyle = '#230D3C';
+    ctx.fillRect(bX, bTop, bW, bH);
+    // Corner rim & rooftop trim
+    ctx.fillStyle = '#4B1C63';
+    ctx.fillRect(bX, bTop, 2, bH);
+    ctx.fillRect(bX, bTop, bW, 3);
+    // Art-deco cornice steps
+    ctx.fillStyle = '#331250';
+    ctx.fillRect(bX + 8, bTop - 6, bW - 16, 6);
+    ctx.fillStyle = '#FF4A8D';
+    ctx.fillRect(bX + 8, bTop - 6, bW - 16, 1);
+
+    // Striped retro shop awning
+    const awY = MENU_GROUND_Y - 52;
+    for (let ax = bX + 6; ax < bX + bW - 10; ax += 6) {
+      ctx.fillStyle = ((ax - bX) % 12 === 0) ? '#FF4A8D' : '#2E1148';
+      ctx.fillRect(ax, awY, 6, 7);
+    }
+    ctx.fillStyle = '#140822';
+    ctx.fillRect(bX + 6, awY + 7, bW - 12, 2);
+
+    // Dark velvet doorway alcove behind where the corgi sits (clean silhouette!)
+    const doorX = cx - 46;
+    ctx.fillStyle = '#150726';
+    ctx.fillRect(doorX, awY + 11, 44, 41);
+    ctx.fillStyle = '#3D1758';
+    ctx.fillRect(doorX, awY + 11, 44, 1);
+
+    // Warm glowing storefront window cleanly to the RIGHT of the seated corgi
+    const winX = cx + 18;
+    const winY = awY + 12;
+    const winW = Math.min(42, bX + bW - winX - 8);
+    const winH = 30;
+    ctx.fillStyle = '#120620';
+    ctx.fillRect(winX - 2, winY - 2, winW + 4, winH + 4);
+    const winGlow = 0.85 + 0.1 * Math.sin(WORLD.time * 3.1);
+    ctx.fillStyle = `rgba(255, 145, 75, ${winGlow.toFixed(2)})`;
+    ctx.fillRect(winX, winY, winW, winH);
+    ctx.fillStyle = '#FFD180';
+    ctx.fillRect(winX + 4, winY + 3, winW - 8, 7);
+    // Mini hookah silhouette inside shop window
+    ctx.drawImage(MH_SPRITES.obstacles.hookah, winX + Math.floor((winW - 12) / 2), winY + 11);
+
+    // Big Pixel Neon Sign "MUSTHAVE" + "RUN" mounted cleanly above storefront
+    const signW = Math.min(144, W - 24);
+    const signH = 56;
+    const signY = Math.max(34, bTop - 64);
+    const signX = cx - Math.floor(signW / 2);
+
+    // Mounting struts
+    ctx.fillStyle = '#160824';
+    ctx.fillRect(signX + 14, signY + signH, 3, bTop - (signY + signH));
+    ctx.fillRect(signX + signW - 17, signY + signH, 3, bTop - (signY + signH));
+
+    // Neon sign dark backing frame + pulsing neon border tube
+    ctx.fillStyle = 'rgba(14, 5, 28, 0.92)';
+    ctx.fillRect(signX, signY, signW, signH);
+    const borderPulse = mt > 0.1 ? (0.8 + 0.2 * Math.sin(WORLD.time * 4)) : 0.2;
+    ctx.fillStyle = `rgba(255, 74, 141, ${borderPulse.toFixed(2)})`;
+    ctx.fillRect(signX, signY, signW, 2);
+    ctx.fillRect(signX, signY + signH - 2, signW, 2);
+    ctx.fillRect(signX, signY, 2, signH);
+    ctx.fillRect(signX + signW - 2, signY, 2, signH);
+
+    // Ambient halo behind neon sign
+    ctx.fillStyle = 'rgba(255, 74, 141, 0.13)';
+    ctx.fillRect(signX - 6, signY - 6, signW + 12, signH + 12);
+
+    // Soft shared neon tube bloom behind MUSTHAVE & RUN
+    if (mt > 0.25) {
+      ctx.fillStyle = 'rgba(255, 74, 141, 0.14)';
+      ctx.fillRect(signX + 12, signY + 5, signW - 24, 18);
+    }
+    if (mt >= 1.08) {
+      ctx.fillStyle = 'rgba(255, 158, 27, 0.14)';
+      ctx.fillRect(cx - 26, signY + 24, 52, 18);
+    }
+
+    // Letter-by-letter light-up + realistic buzz flicker!
+    const word1 = 'MUSTHAVE';
+    const scale1 = 2;
+    const step1 = 13;
+    const startX1 = cx - Math.floor((word1.length * step1 - 3) / 2);
+
+    // Periodic random letter flicker every ~2.8s
+    const flickCycle = WORLD.time % 2.9;
+    const flickIdx = Math.floor(WORLD.time / 2.9) % word1.length;
+
+    for (let i = 0; i < word1.length; i++) {
+      const igniteAt = 0.12 + i * 0.11;
+      let bright = 0;
+      if (mt >= igniteAt) {
+        bright = Math.min(1, (mt - igniteAt) / 0.12);
+        // Ignition double-flash
+        if (mt - igniteAt < 0.18 && Math.floor((mt - igniteAt) * 30) % 2 === 0) {
+          bright = 0.35;
+        }
+        // Ongoing buzzing flicker on one letter
+        if (i === flickIdx && flickCycle > 2.3 && flickCycle < 2.48) {
+          bright = Math.sin(flickCycle * 90) > 0 ? 0.25 : 1.0;
+        }
+      }
+      drawNeonGlyph(
+        ctx,
+        word1[i],
+        startX1 + i * step1,
+        signY + 7,
+        scale1,
+        '#FF4A8D',
+        '#FFF9F2',
+        'rgba(255, 74, 141, 0.28)',
+        bright
+      );
+    }
+
+    // Second line: "RUN" in neon orange + mango-gold
+    const word2 = 'RUN';
+    const step2 = 15;
+    const startX2 = cx - Math.floor((word2.length * step2 - 5) / 2);
+    for (let i = 0; i < word2.length; i++) {
+      const igniteAt = 1.05 + i * 0.10;
+      let bright = mt >= igniteAt ? 1 : 0;
+      if (mt >= igniteAt && mt - igniteAt < 0.16 && Math.floor((mt - igniteAt) * 28) % 2 === 0) {
+        bright = 0.4;
+      }
+      drawNeonGlyph(
+        ctx,
+        word2[i],
+        startX2 + i * step2,
+        signY + 26,
+        2,
+        '#FF9E1B',
+        '#FFF6C7',
+        'rgba(255, 158, 27, 0.28)',
+        bright
+      );
+    }
+    // Decorative neon side bars beside RUN
+    const barBright = mt >= 1.25 ? 0.95 : 0.15;
+    ctx.fillStyle = `rgba(255, 209, 0, ${barBright})`;
+    ctx.fillRect(signX + 12, signY + 32, 20, 2);
+    ctx.fillRect(signX + signW - 32, signY + 32, 20, 2);
+
+    // Crisp 3x5 mini neon flavor sub-bar fitting comfortably inside sign frame
+    if (mt >= 1.32) {
+      drawMiniNeonFlavors(ctx, cx, signY + 45);
+    }
+
+    // Moths fluttering near the glowing neon sign
+    const mothSpr = MH_SPRITES.ambient.moth[Math.floor(WORLD.time * 12) % 2];
+    const m1x = signX + signW - 14 + Math.round(Math.sin(WORLD.time * 3.1) * 7);
+    const m1y = signY + 8 + Math.round(Math.cos(WORLD.time * 4.4) * 5);
+    ctx.drawImage(mothSpr, m1x, m1y);
+    const m2x = signX + 10 + Math.round(Math.cos(WORLD.time * 2.6) * 6);
+    const m2y = signY + 22 + Math.round(Math.sin(WORLD.time * 3.8) * 4);
+    ctx.drawImage(mothSpr, m2x, m2y);
+
+    // Street steam grate puffs
+    for (const sp of WORLD.steamPuffs) {
+      const a = Math.max(0, sp.life / sp.maxLife) * 0.45;
+      ctx.fillStyle = `rgba(220, 195, 240, ${a.toFixed(2)})`;
+      ctx.fillRect(Math.round(sp.x), Math.round(sp.y), sp.life < 0.5 ? 3 : 2, 2);
+    }
+
+    // Wet sidewalk & asphalt neon puddle reflections (shimmering horizontally!)
+    for (let ry = 0; ry < 28; ry += 2) {
+      const py = MENU_GROUND_Y + 9 + ry;
+      const jit = Math.round(Math.sin(WORLD.time * 4.5 + ry * 0.7) * 3);
+      const pinkW = Math.max(18, 66 - ry);
+      ctx.fillStyle = ry % 4 === 0 ? 'rgba(255, 74, 141, 0.34)' : 'rgba(255, 158, 27, 0.24)';
+      ctx.fillRect(cx - Math.floor(pinkW / 2) + jit, py, pinkW, 1);
+      // Warm shop window reflection
+      ctx.fillStyle = 'rgba(255, 209, 0, 0.16)';
+      ctx.fillRect(winX + 4 - jit, py, 24, 1);
+    }
+
+    // Passing car headlights & taillights across wet road
+    if (WORLD.carPass.active) {
+      const cp = WORLD.carPass;
+      const lx = Math.round(cp.x);
+      const ly = MENU_GROUND_Y + 17;
+      // Soft light cone on wet asphalt
+      ctx.fillStyle = 'rgba(255, 240, 175, 0.24)';
+      if (cp.dir > 0) {
+        ctx.fillRect(lx, ly - 1, 36, 5);
+        ctx.fillStyle = '#FFF9D6';
+        ctx.fillRect(lx - 2, ly, 4, 3);
+        ctx.fillStyle = '#FF3B6B';
+        ctx.fillRect(lx - 18, ly, 3, 2);
+      } else {
+        ctx.fillRect(lx - 36, ly - 1, 36, 5);
+        ctx.fillStyle = '#FFF9D6';
+        ctx.fillRect(lx - 2, ly, 4, 3);
+        ctx.fillStyle = '#FF3B6B';
+        ctx.fillRect(lx + 15, ly, 3, 2);
+      }
+    }
+
+    // Corgi runs around the left corner, turns, sits & wags butt under the neon sign!
+    const targetCorgiX = cx - 46;
+    if (mt < 1.05) {
+      const tNorm = mt / 1.05;
+      const runX = -26 + (targetCorgiX + 26) * tNorm;
+      const rf = Math.floor(mt * 14) % 6;
+      const poseSpr = MH_SPRITES.corgi.run[rf];
+      ctx.fillStyle = 'rgba(10, 4, 18, 0.55)';
+      ctx.fillRect(Math.round(runX + 6), MENU_GROUND_Y + 1, 42, 2);
+      drawCorgiPose(ctx, `run${rf}`, runX, MENU_GROUND_Y - poseSpr.height * 2, 2);
+    } else if (mt < 1.40) {
+      const turnIdx = mt < 1.22 ? 'sideRight' : 'frontRight';
+      const hop = mt < 1.25 ? -2 : 0;
+      const tSpr = MH_SPRITES.corgi[turnIdx];
+      ctx.fillStyle = 'rgba(10, 4, 18, 0.55)';
+      ctx.fillRect(targetCorgiX + 6, MENU_GROUND_Y + 1, 44, 2);
+      drawCorgiPose(ctx, turnIdx, targetCorgiX, MENU_GROUND_Y - tSpr.height * 2 + hop, 2);
+    } else {
+      const wagOn = Math.floor((mt - 1.40) * 4.2) % 2 === 1;
+      const bob = wagOn ? -1 : 0;
+      const heroSpr = MH_SPRITES.corgi.hero;
+      ctx.fillStyle = 'rgba(10, 4, 18, 0.55)';
+      ctx.fillRect(targetCorgiX + 4, MENU_GROUND_Y + 1, 46, 2);
+      drawCorgiPose(ctx, wagOn ? 'heroWag' : 'hero', targetCorgiX, MENU_GROUND_Y - heroSpr.height * 2 + bob, 2);
+      // Occasional happy neon heart above corgi
+      if (Math.sin(WORLD.time * 2.2) > 0.72) {
+        ctx.drawImage(MH_SPRITES.ui.heartFull, targetCorgiX + 44, MENU_GROUND_Y - heroSpr.height * 2 - 12);
+      }
+    }
+
+    // Particles (corner dust)
+    for (const p of WORLD.particles) {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+    }
+
+    ctx.drawImage(vignetteCanvas, 0, 0);
+  }
+
+  // ============================================================
+  // SUNSET PLAY SCENE RENDERER
+  // ============================================================
+  function drawSoftGround() {
+    ctx.drawImage(groundBgCanvas, 0, GROUND_Y);
+
+    const gx = Math.round(WORLD.scrollGround);
+    ctx.fillStyle = '#140C1C';
+    ctx.fillRect(0, GROUND_Y, W, 2);
+
+    for (let x = -gx; x < W; x += 48) {
+      ctx.fillStyle = '#140C1C';
+      ctx.fillRect(x + 12, GROUND_Y - 1, 4, 1);
+      ctx.fillRect(x + 34, GROUND_Y - 1, 2, 1);
+
+      ctx.fillStyle = '#FFD59E';
+      ctx.fillRect(x + 4, GROUND_Y + 2, 10, 1);
+      ctx.fillRect(x + 28, GROUND_Y + 2, 6, 1);
+
+      ctx.fillStyle = '#8F4270';
+      ctx.fillRect(x + 8, GROUND_Y + 9, 5, 1);
+      ctx.fillRect(x + 26, GROUND_Y + 14, 2, 1);
+      ctx.fillRect(x + 38, GROUND_Y + 22, 6, 1);
+
+      ctx.fillStyle = '#6A2E5C';
+      ctx.fillRect(x + 16, GROUND_Y + 34, 8, 1);
+      ctx.fillRect(x + 3, GROUND_Y + 48, 3, 1);
+      ctx.fillRect(x + 30, GROUND_Y + 62, 5, 1);
+
+      ctx.fillStyle = '#4E224F';
+      ctx.fillRect(x + 10, GROUND_Y + 86, 7, 1);
+      ctx.fillRect(x + 34, GROUND_Y + 102, 4, 1);
+    }
+
+    if (mode === 'playing' && WORLD.runTime < 3.5) {
       const blink = Math.floor(WORLD.time * 3.5) % 2 === 0;
       if (blink) {
         drawPixelText(ctx, 'ТАПНИ — ПРЫЖОК', W / 2, H - 36, 8, '#FFF9F2', {
@@ -1114,37 +1920,154 @@
     }
   }
 
-  function drawBackdrop(groundY, isMenu) {
+  function drawSunsetBackdrop() {
     ctx.drawImage(skyCanvas, 0, 0);
 
+    // Sun glow pulse
+    const glowAlpha = 0.45 + 0.25 * Math.sin(WORLD.time * 1.9);
+    ctx.save();
+    ctx.globalAlpha = glowAlpha;
+    ctx.drawImage(sunGlowCanvas, SUN_CX - 48, SUN_CY - 48);
+    ctx.restore();
+
+    // Subtle horizontal sunset shimmer glints across lower sun
+    const shimShift = Math.round(Math.sin(WORLD.time * 3.2) * 3);
+    ctx.fillStyle = 'rgba(255, 245, 190, 0.35)';
+    ctx.fillRect(SUN_CX - 16 + shimShift, SUN_CY + 14, 10, 1);
+    ctx.fillRect(SUN_CX + 6 - shimShift, SUN_CY + 20, 8, 1);
+
+    // Twinkling stars in upper sky
     for (const s of STARS) {
+      if (s.x >= W - 3 || s.y >= GROUND_Y - 120) continue;
       const pulse = Math.sin(WORLD.time * 2.4 + s.phase);
-      if (pulse > -0.2) {
-        ctx.fillStyle = pulse > 0.55 ? '#FFF9F2' : '#FFB3D1';
+      if (pulse > -0.15) {
+        ctx.fillStyle = pulse > 0.6 ? '#FFF9F2' : '#FFB3D1';
         ctx.fillRect(s.x, s.y, s.big ? 2 : 1, s.big ? 2 : 1);
+        if (s.big && pulse > 0.78) {
+          ctx.fillRect(s.x - 1, s.y, 1, 1);
+          ctx.fillRect(s.x + 2, s.y, 1, 1);
+        }
       }
     }
 
+    // Rare shooting star
+    if (WORLD.shootingStar.active) {
+      const ss = WORLD.shootingStar;
+      for (let t = 0; t < 5; t++) {
+        ctx.fillStyle = t === 0 ? '#FFF9F2' : `rgba(255, 208, 224, ${(0.82 - t * 0.16).toFixed(2)})`;
+        ctx.fillRect(Math.round(ss.x + t * 2.2), Math.round(ss.y - t * 0.9), 1, 1);
+      }
+    }
+
+    // High-altitude clouds (3 speeds)
     for (const cl of WORLD.clouds) {
-      const spr = cl.kind === 'large' ? MH_SPRITES.clouds.large : MH_SPRITES.clouds.small;
+      const spr = MH_SPRITES.clouds[cl.kind] || MH_SPRITES.clouds.small;
       ctx.drawImage(spr, Math.round(cl.x), Math.round(cl.y));
     }
 
-    const skyY = groundY - skylineCanvas.height;
-    const sx = Math.round(WORLD.scrollSkyline);
-    ctx.drawImage(skylineCanvas, -sx, skyY);
-    ctx.drawImage(skylineCanvas, SKYLINE_W - sx, skyY);
-
-    const px = Math.round(WORLD.scrollPalms);
-    for (let i = -1; i < 4; i++) {
-      const treeX = i * 70 - (px % 70);
-      const scale = i % 2 === 0 ? 1 : 1;
-      const pw = PALM_SPRITE.width * scale;
-      const ph = PALM_SPRITE.height * scale;
-      ctx.drawImage(PALM_SPRITE, treeX, groundY - ph, pw, ph);
+    // Distant blimp / plane
+    if (WORLD.skyCraft.cooldown <= 0) {
+      const sc = WORLD.skyCraft;
+      const spr = sc.kind === 'blimp' ? MH_SPRITES.ambient.blimp : MH_SPRITES.ambient.plane;
+      ctx.drawImage(spr, Math.round(sc.x), Math.round(sc.y));
+      if (sc.kind === 'plane' && Math.floor(WORLD.time * 4) % 2 === 0) {
+        ctx.fillStyle = '#FF4A8D';
+        ctx.fillRect(Math.round(sc.x) + 4, Math.round(sc.y) + 1, 1, 1);
+      }
     }
 
-    drawSoftGround(groundY, isMenu);
+    // Far birds
+    for (const b of WORLD.birds) {
+      if (b.depth !== 'far') continue;
+      const fr = Math.floor(WORLD.time * 5.5 + b.phase) % 2;
+      ctx.drawImage(MH_SPRITES.ambient.birdFar[fr], Math.round(b.x), Math.round(b.y));
+    }
+
+    // Far hazy skyline (low-contrast rose-plum)
+    const farY = GROUND_Y - farSkylineCanvas.height;
+    const fx = Math.round(WORLD.scrollFarSky);
+    for (let tx = -fx; tx < W; tx += FAR_SKY_W) {
+      ctx.drawImage(farSkylineCanvas, tx, farY);
+    }
+
+    // Mid detailed skyline (cached) + animated blinking antennas, flickering windows & MUSTHAVE neon
+    const midY = GROUND_Y - midSkylineCanvas.height;
+    const sx = Math.round(WORLD.scrollSkyline);
+    for (let tx = -sx; tx < W; tx += MID_SKY_W) {
+      ctx.drawImage(midSkylineCanvas, tx, midY);
+
+      // Flickering windows
+      for (const fw of MID_FLICKER_WINDOWS) {
+        if (Math.sin(WORLD.time * 3.1 + fw.phase) < -0.55) {
+          ctx.fillStyle = '#5B2255';
+          ctx.fillRect(tx + fw.x, midY + fw.y, 2, 2);
+        }
+      }
+
+      // Blinking red antenna lights
+      for (const bl of MID_BLINKERS) {
+        const on = Math.sin(WORLD.time * 3.4 + bl.phase) > 0.15;
+        if (on) {
+          ctx.fillStyle = 'rgba(255, 74, 141, 0.35)';
+          ctx.fillRect(tx + bl.x - 1, midY + bl.y - 1, 3, 3);
+          ctx.fillStyle = '#FF3B6B';
+          ctx.fillRect(tx + bl.x, midY + bl.y, 1, 1);
+        }
+      }
+
+      // Subtle MUSTHAVE neon & bar neon on mid skyline
+      for (const ns of MID_NEON_SIGNS) {
+        const pulse = Math.sin(WORLD.time * 4.5 + ns.x) > -0.75;
+        if (ns.kind === 'MH') {
+          ctx.fillStyle = '#3B1540';
+          ctx.fillRect(tx + ns.x, midY + ns.y, ns.w, ns.h);
+          if (pulse) {
+            ctx.fillStyle = 'rgba(255, 74, 141, 0.30)';
+            ctx.fillRect(tx + ns.x - 1, midY + ns.y - 1, ns.w + 2, ns.h + 2);
+            ctx.fillStyle = '#FF6CA8';
+            ctx.fillRect(tx + ns.x + 1, midY + ns.y + 1, ns.w - 2, 1);
+            ctx.fillRect(tx + ns.x + 1, midY + ns.y + ns.h - 2, ns.w - 2, 1);
+            // Tiny pixel 'M H' inside rooftop sign
+            ctx.fillStyle = '#FFD100';
+            const sx0 = tx + ns.x + 4;
+            const sy0 = midY + ns.y + 2;
+            ctx.fillRect(sx0, sy0, 1, 3); ctx.fillRect(sx0 + 2, sy0, 1, 3); ctx.fillRect(sx0 + 1, sy0 + 1, 1, 1);
+            ctx.fillRect(sx0 + 5, sy0, 1, 3); ctx.fillRect(sx0 + 7, sy0, 1, 3); ctx.fillRect(sx0 + 6, sy0 + 1, 1, 1);
+          }
+        } else if (pulse) {
+          ctx.fillStyle = '#FFAE70';
+          ctx.fillRect(tx + ns.x, midY + ns.y, ns.w, 2);
+        }
+      }
+    }
+
+    // Closer birds in front of skyline
+    for (const b of WORLD.birds) {
+      if (b.depth !== 'near') continue;
+      const fr = Math.floor(WORLD.time * 6.5 + b.phase) % 4;
+      ctx.drawImage(MH_SPRITES.ambient.birdNear[fr], Math.round(b.x), Math.round(b.y));
+    }
+
+    // Swaying palms
+    const px = Math.round(WORLD.scrollPalms);
+    for (let i = -1; i < Math.ceil(W / 70) + 1; i++) {
+      const treeX = i * 70 - (px % 70);
+      drawSwayingPalm(treeX, GROUND_Y, 1, i * 1.6);
+    }
+
+    // Wind streaks
+    for (const ws of WORLD.windStreaks) {
+      ctx.fillStyle = 'rgba(255, 240, 232, 0.28)';
+      ctx.fillRect(Math.round(ws.x), Math.round(ws.y), ws.len, 1);
+    }
+
+    // Blown blossom petals
+    for (const pt of WORLD.petals) {
+      ctx.fillStyle = pt.color;
+      ctx.fillRect(Math.round(pt.x), Math.round(pt.y), 2, 1);
+    }
+
+    drawSoftGround();
   }
 
   function drawCoalSmoke(x, y) {
@@ -1160,6 +2083,18 @@
         ctx.fillRect(Math.round(baseX + wave), Math.round(y - h), h % 3 === 0 ? 2 : 1, 1);
       }
     }
+    // Heat shimmer & rising glowing ember sparks
+    for (let e = 0; e < 3; e++) {
+      const et = (WORLD.time * 1.6 + e * 0.37) % 1;
+      const ex = x + 6 + e * 6 + Math.round(Math.sin(WORLD.time * 8 + e * 2) * 1.5);
+      const ey = y - 3 - Math.round(et * 14);
+      ctx.fillStyle = et < 0.5 ? '#FFD100' : 'rgba(255, 128, 102, 0.65)';
+      ctx.fillRect(Math.round(ex), Math.round(ey), 1, 1);
+    }
+    const shX = x + 4 + Math.round(Math.sin(WORLD.time * 14) * 2);
+    ctx.fillStyle = 'rgba(255, 230, 170, 0.32)';
+    ctx.fillRect(shX, y - 5, 5, 1);
+    ctx.fillRect(shX + 7, y - 8, 4, 1);
   }
 
   function renderMainCanvas() {
@@ -1171,29 +2106,18 @@
     }
 
     if (mode === 'menu' || mode === 'sub' || mode === 'rating') {
-      drawBackdrop(MENU_GROUND_Y, true);
-
-      // Start Screen Showcase: cute 3_corgi.png-faithful Hero pose at 2x!
-      const bob = Math.sin(WORLD.time * 4) > 0.35 ? -1 : 0;
-      const heroSpr = MH_SPRITES.corgi.hero;
-      drawCorgiPose(ctx, 'hero', 24, MENU_GROUND_Y - heroSpr.height * 2 + bob, 2);
-
-      // 2x Hookah silhouette on the right
-      const hSpr = MH_SPRITES.obstacles.hookah;
-      ctx.drawImage(hSpr, 130, MENU_GROUND_Y - hSpr.height * 2, hSpr.width * 2, hSpr.height * 2);
-
-      // Floating 2x Pineapple above left
-      const fSpr = MH_SPRITES.fruits.pineapple;
-      const fbob = Math.round(Math.sin(WORLD.time * 3.5) * 3);
-      ctx.drawImage(fSpr, 24, MENU_GROUND_Y - 84 + fbob, fSpr.width * 2, fSpr.height * 2);
-
+      renderNightMenuScene();
+      if (WORLD.transitionAlpha > 0) {
+        ctx.fillStyle = `rgba(18, 6, 36, ${WORLD.transitionAlpha.toFixed(2)})`;
+        ctx.fillRect(0, 0, W, H);
+      }
       ctx.restore();
       return;
     }
 
-    drawBackdrop(GROUND_Y, false);
+    drawSunsetBackdrop();
 
-    // Draw Obstacles (1x)
+    // Draw Obstacles (1x, deep #140C1C silhouette pops cleanly!)
     for (const o of WORLD.obstacles) {
       const ox = Math.round(o.x);
       const oy = Math.round(o.y);
@@ -1208,10 +2132,20 @@
       }
     }
 
-    // Draw Fruits (1x)
+    // Draw Fruits with gentle bob + soft glow + orbiting glint
     for (const f of WORLD.fruits) {
+      const fx = Math.round(f.x);
       const fy = Math.round(f.baseY + Math.sin(WORLD.time * 5 + f.phase) * 2.5);
-      ctx.drawImage(MH_SPRITES.fruits[f.kind], Math.round(f.x), fy);
+      const haloA = 0.22 + 0.10 * Math.sin(WORLD.time * 4 + f.phase);
+      ctx.fillStyle = `rgba(255, 242, 180, ${haloA.toFixed(2)})`;
+      ctx.fillRect(fx + 1, fy - 1, f.w - 2, f.h + 2);
+      ctx.fillRect(fx - 1, fy + 1, f.w + 2, f.h - 2);
+      ctx.drawImage(MH_SPRITES.fruits[f.kind], fx, fy);
+      // Orbiting 1px sparkle glint
+      const gx = fx + Math.round(f.w / 2 + Math.cos(WORLD.time * 4.5 + f.phase) * 7);
+      const gy = fy + Math.round(f.h / 2 + Math.sin(WORLD.time * 4.5 + f.phase) * 5);
+      ctx.fillStyle = '#FFF9F2';
+      ctx.fillRect(gx, gy, 1, 1);
     }
 
     // Ground shadow under corgi
@@ -1220,7 +2154,7 @@
     ctx.fillStyle = 'rgba(20, 12, 28, 0.38)';
     ctx.fillRect(Math.round(WORLD.corgi.x + 14 - shadowW / 2), GROUND_Y + 2, shadowW, 1);
 
-    // Draw Corgi (Intro or Gameplay, 1x -> ~1/7 screen width)
+    // Draw Corgi (Intro or Gameplay)
     if (mode === 'intro') {
       const pose = getIntroPose(WORLD.introTime);
       const poseRows = pose === 'crouch' ? 14 : pose === 'sideRight' || pose === 'sideLeft' ? 17 : pose.startsWith('back') || pose.startsWith('front') ? 21 : 18;
@@ -1248,10 +2182,18 @@
     }
 
     for (const pop of WORLD.popups) {
-      drawPixelText(ctx, pop.text, pop.x, pop.y, 8, '#FFD100', {
+      const popScaleY = pop.life > pop.maxLife - 0.12 ? -2 : 0;
+      drawPixelText(ctx, pop.text, pop.x, pop.y + popScaleY, 8, '#FFD100', {
         align: 'center',
         outline: '#140C1C',
       });
+    }
+
+    ctx.drawImage(vignetteCanvas, 0, 0);
+
+    if (WORLD.transitionAlpha > 0) {
+      ctx.fillStyle = `rgba(18, 6, 36, ${WORLD.transitionAlpha.toFixed(2)})`;
+      ctx.fillRect(0, 0, W, H);
     }
 
     ctx.restore();
@@ -1293,8 +2235,9 @@
   }
 
   window.__MH_DEBUG = {
-    getState: () => ({ mode, score: WORLD.score, lives: saveState.lives, runTime: WORLD.runTime }),
+    getState: () => ({ mode, score: WORLD.score, lives: saveState.lives, runTime: WORLD.runTime, W, H, GROUND_Y }),
     showScreen,
+    setMenuTime: (t) => { WORLD.menuTime = t; },
     clearWorld: () => {
       WORLD.obstacles = [];
       WORLD.fruits = [];
@@ -1309,7 +2252,7 @@
         saveState.bestScore = s;
         MH_STORAGE.save(saveState);
       }
-      updateHUDPills();
+      updateHUDPills(false);
     },
     spawnObstacle: (kind) => {
       let spr = MH_SPRITES.obstacles.hookah;
@@ -1327,7 +2270,7 @@
       saveState.lives = livesLeft;
       saveState.depletedAt = livesLeft === 0 ? Date.now() : null;
       MH_STORAGE.save(saveState);
-      updateHUDPills();
+      updateHUDPills(false);
       showScreen('gameover');
     },
     jump: () => requestJump(),
