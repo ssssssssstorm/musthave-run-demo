@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>MUSTHAVE RUN</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect width=%2716%27 height=%2716%27 fill=%27%23FF4A8D%27/><rect x=%273%27 y=%273%27 width=%2710%27 height=%2710%27 fill=%27%23FFD100%27/></svg>" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="phone-stage">
+      <canvas id="game-canvas" width="195" height="422"></canvas>
+
+      <!-- Minimal Rounded HUD Pills during Intro / Gameplay (6_scale_reference.png style) -->
+      <div id="hud-pills" class="hud-pills hidden">
+        <button id="btn-hud-back" class="hud-pill hud-pill-circle" type="button" title="В меню" aria-label="Назад в меню">
+          ←
+        </button>
+        <div class="hud-pills-right">
+          <div class="hud-pill">
+            <img id="hud-fruit-icon" class="hud-icon" alt="" />
+            <span id="hud-score">0</span>
+          </div>
+          <div class="hud-pill">
+            <img id="hud-heart-icon" class="hud-icon" alt="" />
+            <span id="hud-lives">5</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Quick Controls (Hat & Sound) on Start / Menu -->
+      <div id="top-controls" class="top-controls">
+        <button id="btn-hat" class="pill-btn" type="button" title="Новогодний колпак">
+          <span class="hat-dot"></span><span>КОЛПАК</span>
+        </button>
+        <button id="btn-sound" class="pill-btn" type="button" title="Звук">
+          <span id="sound-label">ЗВУК: ВКЛ</span>
+        </button>
+      </div>
+
+      <!-- SCREEN: START MENU -->
+      <section id="screen-start" class="overlay screen-start active">
+        <div class="start-header">
+          <div class="title-line">
+            <span class="title-dash">=</span>
+            <span class="title-main">MUSTHAVE</span>
+            <span class="title-run">RUN</span>
+            <span class="title-dash">=</span>
+          </div>
+          <div class="subtitle-pill">MANGO • PEACH • PINEAPPLE</div>
+        </div>
+
+        <div class="start-spacer"></div>
+
+        <div class="start-footer">
+          <div id="start-lives-badge" class="lives-badge"></div>
+
+          <button id="btn-play" class="px-btn px-btn-pink" type="button">
+            <span>ИГРАТЬ</span>
+            <span class="px-play-tri" aria-hidden="true">▶</span>
+          </button>
+
+          <button id="btn-rating" class="px-btn px-btn-white" type="button">
+            <span>РЕЙТИНГ</span>
+            <span class="px-bars" aria-hidden="true">
+              <i class="b1"></i><i class="b2"></i><i class="b3"></i>
+            </span>
+          </button>
+
+          <div id="start-lock-note" class="lock-note hidden">
+            Лимит на сегодня исчерпан • <span id="start-timer">24:00:00</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: SUBSCRIPTION GATE -->
+      <section id="screen-sub" class="overlay modal-backdrop hidden">
+        <div class="px-card sub-card">
+          <div class="sub-badge">MUSTHAVE TOBACCO</div>
+          <h2 class="card-title">ПОДПИШИТЕСЬ<br />НА КАНАЛ,<br />ЧТОБЫ ИГРАТЬ</h2>
+          <p class="card-desc">
+            Подпишись на официальный канал @musthave_tobacco, чтобы запустить игру и попасть в рейтинг.
+          </p>
+
+          <div id="sub-status" class="sub-status hidden"></div>
+
+          <button id="btn-subscribe" class="px-btn px-btn-tg" type="button">
+            ПОДПИСАТЬСЯ
+          </button>
+          <button id="btn-check-sub" class="px-btn px-btn-pink" type="button">
+            ПРОВЕРИТЬ ПОДПИСКУ
+          </button>
+          <button id="btn-sub-back" class="px-btn-ghost" type="button">
+            НАЗАД
+          </button>
+        </div>
+      </section>
+
+      <!-- SCREEN: GAME OVER -->
+      <section id="screen-gameover" class="overlay modal-backdrop hidden">
+        <div class="px-card go-card">
+          <h2 class="go-title">GAME OVER</h2>
+
+          <div class="go-diorama-wrap">
+            <canvas id="gameover-canvas" width="96" height="36"></canvas>
+            <div class="go-tease">«Эх, ещё чуть-чуть...»</div>
+          </div>
+
+          <div class="go-stats">
+            <div class="stat-box">
+              <div class="stat-lbl">СЧЁТ</div>
+              <div id="go-score" class="stat-val">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-lbl">РЕКОРД</div>
+              <div id="go-best" class="stat-val stat-gold">0</div>
+            </div>
+          </div>
+
+          <div id="go-lives-row" class="go-lives-row"></div>
+
+          <div id="go-actions-alive" class="go-actions">
+            <button id="btn-retry" class="px-btn px-btn-pink" type="button">
+              ИГРАТЬ СНОВА
+            </button>
+            <div class="go-sub-actions">
+              <button id="btn-go-rating" class="px-btn px-btn-white px-btn-sm" type="button">
+                РЕЙТИНГ
+              </button>
+              <button id="btn-go-menu" class="px-btn px-btn-white px-btn-sm" type="button">
+                МЕНЮ
+              </button>
+            </div>
+          </div>
+
+          <div id="go-actions-locked" class="go-locked hidden">
+            <div class="locked-box">
+              <div class="locked-msg">Вернитесь в игру<br />через 24 часа</div>
+              <div class="locked-timer" id="go-timer">23:59:59</div>
+            </div>
+            <div class="go-sub-actions">
+              <button id="btn-go-rating-locked" class="px-btn px-btn-white px-btn-sm" type="button">
+                РЕЙТИНГ
+              </button>
+              <button id="btn-go-menu-locked" class="px-btn px-btn-white px-btn-sm" type="button">
+                МЕНЮ
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: LEADERBOARD / RATING -->
+      <section id="screen-rating" class="overlay modal-backdrop hidden">
+        <div class="px-card rating-card">
+          <div class="rating-head">
+            <h2 class="card-title">= РЕЙТИНГ =</h2>
+            <div class="rating-season">СЕЗОН #1 • ДЕМО</div>
+          </div>
+
+          <div id="rating-list" class="rating-list"></div>
+
+          <button id="btn-rating-back" class="px-btn px-btn-pink" type="button">
+            НАЗАД
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="js/sprites.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/telegram.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
