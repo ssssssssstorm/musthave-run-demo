@@ -2,11 +2,16 @@
 window.MH_TG = (function () {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
+  // Online leaderboard API (separate Render web service). `?api=<url>` overrides it for local testing.
+  const DEFAULT_API = 'https://musthave-run-api.onrender.com';
+  const apiParam = new URLSearchParams(window.location.search).get('api');
   const CONFIG = {
     channelUsername: 'musthave_tobacco',
     channelUrl: 'https://t.me/musthave_tobacco',
-    apiBaseUrl: null,
+    subscriptionApi: null,
+    apiBaseUrl: (apiParam && /^https?:\/\//.test(apiParam) ? apiParam : DEFAULT_API).replace(/\/+$/, ''),
   };
+  const PENDING_KEY = 'mh_pending_scores_v1';
 
   function applySafeAreaVars() {
     const root = document.documentElement;
@@ -52,6 +57,8 @@ window.MH_TG = (function () {
   }
 
   function init() {
+    warmUp();
+    setTimeout(() => { flushPending().catch(() => {}); }, 1500);
     if (!tg) return;
     try {
       tg.ready();
@@ -85,6 +92,95 @@ window.MH_TG = (function () {
         tg.HapticFeedback.impactOccurred(type);
       }
     } catch (_) {}
+  }
+
+  function getInitData() {
+    const app = (window.Telegram && window.Telegram.WebApp) || tg;
+    return app && typeof app.initData === 'string' && app.initData.length > 20 ? app.initData : '';
+  }
+
+  function isTelegram() {
+    return !!getInitData();
+  }
+
+  async function apiFetch(path, opts = {}, timeoutMs = 25000) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
+    try {
+      const res = await fetch(CONFIG.apiBaseUrl + path, Object.assign({}, opts, ctl ? { signal: ctl.signal } : {}));
+      let data = null;
+      try { data = await res.json(); } catch (_) {}
+      return { status: res.status, data: data || {} };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // Free Render services sleep when idle: wake the API as soon as the app opens
+  function warmUp() {
+    apiFetch('/api/health', {}, 60000).catch(() => {});
+  }
+
+  function readPending() {
+    try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]') || []; } catch (_) { return []; }
+  }
+  function writePending(list) {
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-5))); } catch (_) {}
+  }
+
+  async function postScore(item) {
+    return apiFetch('/api/score', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+  }
+
+  // Retry scores that could not be delivered (offline / server asleep); drops ones the server answered
+  async function flushPending() {
+    const list = readPending();
+    if (!list.length) return;
+    const keep = [];
+    for (const item of list) {
+      try {
+        const r = await postScore(item);
+        if (r.status >= 500) keep.push(item);
+      } catch (_) {
+        keep.push(item);
+      }
+    }
+    writePending(keep);
+  }
+
+  let lastSubmit = Promise.resolve(null);
+  function submitScore(score, runStats, clientRunId) {
+    const initData = getInitData();
+    if (!initData) {
+      lastSubmit = Promise.resolve({ ok: false, offline: true, error: 'not_telegram' });
+      return lastSubmit;
+    }
+    const item = { initData, score, runStats: runStats || {}, clientRunId };
+    lastSubmit = (async () => {
+      try {
+        const r = await postScore(item);
+        if (r.status >= 500) throw new Error('server_' + r.status);
+        flushPending().catch(() => {});
+        return Object.assign({ status: r.status }, r.data);
+      } catch (e) {
+        writePending(readPending().concat([item]));
+        return { ok: false, offline: true, error: 'network' };
+      }
+    })();
+    return lastSubmit;
+  }
+
+  async function fetchLeaderboard() {
+    await Promise.race([lastSubmit.catch(() => null), new Promise(r => setTimeout(r, 6000))]);
+    const initData = getInitData();
+    const headers = initData ? { 'X-Telegram-Init-Data': initData } : {};
+    const r = await apiFetch('/api/leaderboard?limit=50', { headers });
+    if (r.status !== 200 || !r.data.ok) throw new Error('leaderboard_' + r.status);
+    return r.data;
   }
 
   function getWebApp() {
@@ -121,8 +217,9 @@ window.MH_TG = (function () {
   }
 
   async function checkSubscription() {
-    if (CONFIG.apiBaseUrl && tg && tg.initData) {
-      const res = await fetch(`${CONFIG.apiBaseUrl}/api/check-subscription`, {
+    // channel-subscription check is still a demo stub (no backend endpoint yet)
+    if (CONFIG.subscriptionApi && tg && tg.initData) {
+      const res = await fetch(`${CONFIG.subscriptionApi}/api/check-subscription`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
@@ -131,17 +228,6 @@ window.MH_TG = (function () {
     }
     await new Promise(r => setTimeout(r, 650));
     return { subscribed: true, demo: true };
-  }
-
-  async function submitScore(score) {
-    if (CONFIG.apiBaseUrl && tg && tg.initData) {
-      await fetch(`${CONFIG.apiBaseUrl}/api/score`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: tg.initData, score }),
-      });
-    }
-    return { ok: true, demo: true };
   }
 
   return {
@@ -153,5 +239,9 @@ window.MH_TG = (function () {
     openChannel,
     checkSubscription,
     submitScore,
+    fetchLeaderboard,
+    flushPending,
+    warmUp,
+    isTelegram,
   };
 })();

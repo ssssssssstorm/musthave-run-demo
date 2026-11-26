@@ -1089,7 +1089,7 @@
     return {
       tramps: 0, bounces: 0, birds: 0, birdsPassed: 0, ducks: 0, fastFalls: 0,
       magnets: 0, shields: 0, shieldBreaks: 0, golden: 0, goldenSpawned: 0,
-      pickupsSpawned: 0, rains: 0, rainFruit: 0, smokes: 0, maxMult: 1, comboBreaks: 0, missed: 0,
+      fruits: 0, pickupsSpawned: 0, rains: 0, rainFruit: 0, smokes: 0, maxMult: 1, comboBreaks: 0, missed: 0,
     };
   }
   WORLD.stats = newStats();
@@ -1186,6 +1186,7 @@
     WORLD.botDuck = false;
     WORLD.corgi.wasDucking = false;
     WORLD.stats = newStats();
+    WORLD.runId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     updateHUDPills(false);
     updateStatusHUD(true);
   }
@@ -1878,47 +1879,108 @@
     }
   }
 
-  function populateRating() {
-    const list = MH_STORAGE.getLeaderboard(saveState, user);
-    ratingList.innerHTML = '';
-    list.forEach((entry, i) => {
-      const row = document.createElement('div');
-      row.className = 'rating-row' + (entry.isMe ? ' me' : '');
+  // ---------------- ONLINE LEADERBOARD ----------------
+  const ratingSeasonEl = document.querySelector('#screen-rating .rating-season');
+  let ratingReq = 0;
 
-      const left = document.createElement('div');
-      left.className = 'rating-left';
-
-      const rank = document.createElement('span');
-      rank.className = 'rating-rank' + (i === 0 ? ' r1' : i === 1 ? ' r2' : i === 2 ? ' r3' : '');
-      rank.textContent = String(i + 1);
-
-      const name = document.createElement('span');
-      name.className = 'rating-name';
-      name.textContent = entry.name;
-
-      left.appendChild(rank);
-      left.appendChild(name);
-
-      const scoreWrap = document.createElement('span');
-      scoreWrap.className = 'rating-score-wrap';
-
-      const score = document.createElement('span');
-      score.className = 'rating-score';
-      score.textContent = String(entry.score);
-
-      const icon = document.createElement('img');
-      icon.className = 'px-fruit-mini';
-      icon.src = PINEAPPLE_URI;
-      icon.alt = '';
-
-      scoreWrap.appendChild(score);
-      scoreWrap.appendChild(icon);
-
-      row.appendChild(left);
-      row.appendChild(scoreWrap);
-      ratingList.appendChild(row);
-    });
+  function ratingRow(entry) {
+    const row = document.createElement('div');
+    row.className = 'rating-row' + (entry.isMe ? ' me' : '') + (entry.pinned ? ' pinned' : '');
+    const left = document.createElement('div');
+    left.className = 'rating-left';
+    const rank = document.createElement('span');
+    const r = entry.rank;
+    rank.className = 'rating-rank' + (r === 1 ? ' r1' : r === 2 ? ' r2' : r === 3 ? ' r3' : '');
+    rank.textContent = r ? String(r) : '–';
+    const name = document.createElement('span');
+    name.className = 'rating-name';
+    name.textContent = entry.name;
+    left.appendChild(rank);
+    left.appendChild(name);
+    const scoreWrap = document.createElement('span');
+    scoreWrap.className = 'rating-score-wrap';
+    const score = document.createElement('span');
+    score.className = 'rating-score';
+    score.textContent = String(entry.score);
+    const icon = document.createElement('img');
+    icon.className = 'px-fruit-mini';
+    icon.src = PINEAPPLE_URI;
+    icon.alt = '';
+    scoreWrap.appendChild(score);
+    scoreWrap.appendChild(icon);
+    row.appendChild(left);
+    row.appendChild(scoreWrap);
+    return row;
   }
+
+  function ratingNote(text, cls = '') {
+    const d = document.createElement('div');
+    d.className = 'rating-note' + (cls ? ' ' + cls : '');
+    d.textContent = text;
+    return d;
+  }
+
+  function ratingSpinner() {
+    const wrap = document.createElement('div');
+    wrap.className = 'rating-loading';
+    const sp = document.createElement('div');
+    sp.className = 'px-spinner';
+    for (let i = 0; i < 8; i++) sp.appendChild(document.createElement('i'));
+    wrap.appendChild(sp);
+    wrap.appendChild(ratingNote('ЗАГРУЗКА...'));
+    return wrap;
+  }
+
+  function myLocalName() {
+    return user.username ? '@' + user.username : (user.isTelegram ? user.name : 'ТЫ');
+  }
+
+  function renderRatingOffline() {
+    ratingList.innerHTML = '';
+    ratingList.appendChild(ratingNote('НЕТ СВЯЗИ С СЕРВЕРОМ', 'warn'));
+    ratingList.appendChild(ratingNote('ПОКАЗАН ТВОЙ ЛОКАЛЬНЫЙ РЕКОРД'));
+    ratingList.appendChild(ratingRow({ rank: null, name: myLocalName() + ' (ЛОКАЛЬНО)', score: saveState.bestScore || 0, isMe: true }));
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'px-btn px-btn-white px-btn-sm rating-retry';
+    retry.textContent = 'ПОВТОРИТЬ';
+    retry.addEventListener('click', (e) => { e.stopPropagation(); MH_AUDIO.click(); populateRating(); });
+    ratingList.appendChild(retry);
+  }
+
+  function renderRatingOnline(data) {
+    ratingList.innerHTML = '';
+    const inTg = MH_TG.isTelegram();
+    if (!inTg) ratingList.appendChild(ratingNote('ОТКРОЙ ИГРУ В TELEGRAM, ЧТОБЫ ПОПАСТЬ В РЕЙТИНГ', 'hint'));
+    const top = data.top || [];
+    if (!top.length) ratingList.appendChild(ratingNote('ПОКА ПУСТО — СТАНЬ ПЕРВЫМ!'));
+    top.forEach((e) => ratingList.appendChild(ratingRow(e)));
+    const me = data.me;
+    if (inTg && me && !me.inTop) {
+      ratingList.appendChild(ratingNote('• • •', 'gap'));
+      ratingList.appendChild(ratingRow({
+        rank: me.rank,
+        name: me.rank ? (me.name || myLocalName()) : myLocalName() + ' • НЕТ ОЧКОВ',
+        score: me.best || 0,
+        isMe: true,
+        pinned: true,
+      }));
+    }
+    if (ratingSeasonEl) ratingSeasonEl.textContent = 'СЕЗОН #' + (data.season || 1) + ' • ОНЛАЙН • ИГРОКОВ: ' + (data.total || 0);
+    const meRow = ratingList.querySelector('.rating-row.me:not(.pinned)');
+    if (meRow && meRow.scrollIntoView) meRow.scrollIntoView({ block: 'nearest' });
+  }
+
+  function populateRating() {
+    const req = ++ratingReq;
+    if (ratingSeasonEl) ratingSeasonEl.textContent = 'СЕЗОН #1 • ОНЛАЙН';
+    ratingList.innerHTML = '';
+    ratingList.appendChild(ratingSpinner());
+    MH_TG.fetchLeaderboard()
+      .then((data) => { if (req === ratingReq) renderRatingOnline(data); })
+      .catch(() => { if (req === ratingReq) renderRatingOffline(); });
+  }
+
 
   btnHudBack.addEventListener('click', () => {
     MH_AUDIO.click();
@@ -2508,6 +2570,7 @@
     WORLD.mult = m;
     if (m > WORLD.stats.maxMult) WORLD.stats.maxMult = m;
     const golden = f.kind === 'golden';
+    WORLD.stats.fruits += 1;
     const pts = (golden ? 5 : 1) * m;
     WORLD.score += pts;
     updateHUDPills(true);
@@ -2704,7 +2767,24 @@
     saveState.gamesPlayed += 1;
     MH_STORAGE.spendLife(saveState);
     updateHUDPills(false);
-    MH_TG.submitScore(WORLD.score).catch(() => {});
+    const st = WORLD.stats || {};
+    MH_TG.submitScore(WORLD.score, {
+      v: 'r3',
+      runTimeMs: Math.round(WORLD.runTime * 1000),
+      fruits: st.fruits || 0,
+      golden: st.golden || 0,
+      maxMult: st.maxMult || 1,
+      bounces: st.bounces || 0,
+      birdsPassed: st.birdsPassed || 0,
+      magnets: st.magnets || 0,
+      shields: st.shields || 0,
+      shieldBreaks: st.shieldBreaks || 0,
+      rains: st.rains || 0,
+      smokes: st.smokes || 0,
+      comboBreaks: st.comboBreaks || 0,
+      missed: st.missed || 0,
+      doubles: doubleJumpCount,
+    }, WORLD.runId).catch(() => {});
   }
 
   // ============================================================

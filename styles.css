@@ -693,6 +693,82 @@ html, body {
   display: block;
 }
 
+.rating-row.pinned {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 2px;
+}
+
+.rating-note {
+  font-size: 7px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--pink-dark);
+  padding: 4px 2px;
+}
+
+.rating-note.warn {
+  color: #E62E4D;
+  font-size: 8px;
+}
+
+.rating-note.hint {
+  background: #140C1C;
+  color: #FFD100;
+  border: 2px solid var(--ink);
+  padding: 7px 6px;
+}
+
+.rating-note.gap {
+  padding: 0;
+  letter-spacing: 2px;
+}
+
+.rating-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 0;
+}
+
+/* 8-dot pixel spinner: one bright dot steps around the ring */
+.px-spinner {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+
+.px-spinner i {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--ink);
+  opacity: 0.25;
+  animation: pxSpin 0.8s steps(1, end) infinite;
+}
+
+.px-spinner i:nth-child(1) { left: 12px; top: 0; animation-delay: 0s; }
+.px-spinner i:nth-child(2) { left: 21px; top: 3px; animation-delay: 0.1s; }
+.px-spinner i:nth-child(3) { left: 24px; top: 12px; animation-delay: 0.2s; }
+.px-spinner i:nth-child(4) { left: 21px; top: 21px; animation-delay: 0.3s; }
+.px-spinner i:nth-child(5) { left: 12px; top: 24px; animation-delay: 0.4s; }
+.px-spinner i:nth-child(6) { left: 3px; top: 21px; animation-delay: 0.5s; }
+.px-spinner i:nth-child(7) { left: 0; top: 12px; animation-delay: 0.6s; }
+.px-spinner i:nth-child(8) { left: 3px; top: 3px; animation-delay: 0.7s; }
+
+@keyframes pxSpin {
+  0% { opacity: 1; background: var(--pink); }
+  12.5% { opacity: 0.6; background: var(--ink); }
+  25%, 100% { opacity: 0.25; background: var(--ink); }
+}
+
+.rating-retry {
+  align-self: center;
+  margin-top: 4px;
+}
+
 .rating-card .px-btn {
   min-height: 46px;
   font-size: 13px;

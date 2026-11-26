@@ -38,6 +38,18 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
   - After the daily lives are spent, `ИГРАТЬ СНОВА` is hidden and replaced by *«Вернитесь в игру через 24 часа»* + countdown.
 - **Leaderboard (`РЕЙТИНГ`)**: Mock leaderboard with the current player highlighted and sorted by best score.
 
+## Online Leaderboard (`server/`)
+- **API**: `https://musthave-run-api.onrender.com` — small Node service (`server/index.js`, only dependency `pg`), Render **free** web service + Render **free Postgres** (`render.yaml` Blueprint). The game stays on the static site; the API allows CORS only from `https://musthave-run.onrender.com`.
+- **Auth**: every write is authenticated with Telegram WebApp `initData` (HMAC-SHA256 with `TELEGRAM_BOT_TOKEN`, secret env var on Render, never committed); `auth_date` older than 24 h is rejected.
+- **Endpoints**
+  - `POST /api/score` `{initData, score, runStats: {runTimeMs, fruits, golden, ...}, clientRunId}` → stores the run, updates the per-user best (`accepted`, `reason`, `best`, `rank`, `isNewBest`). Retries with the same `clientRunId` are idempotent.
+  - `GET /api/leaderboard?limit=50` (optional header `X-Telegram-Init-Data`) → top 50 + caller's `me: {rank, best, inTop, total}`.
+  - `GET /api/health`.
+- **Anti-cheat**: score ≤ 10·seconds + 30; fruits ≤ 6·seconds + 20; fruits ≤ score ≤ 5·fruits + 20·golden; run ≤ 60 min; rejected runs are stored with a reason but never count; max runs per rolling 24 h = daily lives + 1 (5 → 6, VIP `pnkmnmr` / `musthave_pinkman` / `ttvwraithh` 100 → 101); ≥ 2.5 s between submissions per user; per-IP token buckets (20 scores/min, 40 leaderboard reads/min).
+- **Schema**: `players`, `runs`, `best_scores`, `seasons`; runs and bests carry `season_id` (default 1) so seasons / resets with history can be added later.
+- **Client**: score is sent on game over (queued in `localStorage` and retried if offline / server asleep); the rating screen shows a pixel spinner, live top 50 with medal colours, highlights your row and pins it at the bottom when you're outside the top; offline → local best. Outside Telegram the board is read-only with a hint.
+- Local run: `cd server && npm i && DATABASE_URL=postgres://... TELEGRAM_BOT_TOKEN=... ALLOWED_ORIGINS='http://127.0.0.1:*' node index.js`, then open the game with `?api=http://127.0.0.1:10000`.
+
 ## Run Locally
 Serve the `/workspace/musthave-run` folder with any static HTTP server:
 
