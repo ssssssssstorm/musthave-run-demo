@@ -16,6 +16,83 @@
   let CORGI_GROUND_TOP = 235;
   const PLAY_SCALE = 1;
 
+  // ============================================================
+  // PHYSICS, OBSTACLE HITBOXES & FAIRNESS MODEL
+  // ============================================================
+  const GRAVITY = 740;
+  const JUMP_V = 305;           // first jump impulse (apex ~63px)
+  const JUMP2_V = 300;          // second (air) jump impulse
+  const AIR_T = (2 * JUMP_V) / GRAVITY;   // airtime of a single jump (~0.82s)
+  const DJ_TS = 0.28;           // "natural" moment (s after take-off) of the 2nd jump, used by the fairness model
+  const CORGI_HIT_W = 19;
+  const REACT_T = 0.28;         // human reaction margin baked into every gap
+  const FLIP_DUR = 0.52;        // somersault duration, 8 pixel steps
+  const FLIP_STEPS = 8;
+
+  // Speed: starts calm and eases into the original pace curve (105 + 2.1/s, capped at 220)
+  function speedAt(t) {
+    return Math.min(220, 105 + 2.1 * t - 35 * Math.exp(-t / 14));
+  }
+
+  // time window (s after take-off) during which a single jump keeps the corgi's feet above `h` px
+  function singleWindow(h) {
+    const disc = JUMP_V * JUMP_V - 2 * GRAVITY * h;
+    if (disc <= 0) return null;
+    const sq = Math.sqrt(disc);
+    return [(JUMP_V - sq) / GRAVITY, (JUMP_V + sq) / GRAVITY];
+  }
+
+  // same for a double jump whose second tap lands `ts` seconds after take-off
+  function doubleProfile(h, ts = DJ_TS) {
+    const r0 = JUMP_V * ts - 0.5 * GRAVITY * ts * ts;
+    const c = h - r0;
+    const disc = JUMP2_V * JUMP2_V - 2 * GRAVITY * c;
+    if (disc <= 0) return null;
+    const sq = Math.sqrt(disc);
+    const up = ts + Math.max(0, (JUMP2_V - sq) / GRAVITY);
+    const down = ts + (JUMP2_V + sq) / GRAVITY;
+    const land = ts + (JUMP2_V + Math.sqrt(JUMP2_V * JUMP2_V + 2 * GRAVITY * r0)) / GRAVITY;
+    return { up, down, land };
+  }
+
+  // Obstacle table: hit rects are in sprite pixels (stem/flask etc. are separate rects, so empty air isn't deadly)
+  const OBST = {};
+  function defObstacle(kind, spr, rects, big) {
+    const bx0 = Math.min(...rects.map(r => r.x));
+    const bx1 = Math.max(...rects.map(r => r.x + r.w));
+    const by0 = Math.min(...rects.map(r => r.y));
+    OBST[kind] = {
+      kind, w: spr.width, h: spr.height, rects, bx0, bx1, by0,
+      wHit: bx1 - bx0,
+      hth: spr.height - by0 - 1,   // how far the corgi's feet must rise to pass over the top of the hit area
+      big: !!big,
+    };
+  }
+  defObstacle('hookah', MH_SPRITES.obstacles.hookah, [{ x: 8, y: 4, w: 5, h: 14 }, { x: 6, y: 17, w: 11, h: 12 }]);
+  defObstacle('hookahBig', MH_SPRITES.obstacles.hookahBig, [{ x: 16, y: 5, w: 11, h: 43 }, { x: 9, y: 47, w: 24, h: 25 }], true);
+  defObstacle('shilavilki', MH_SPRITES.obstacles.shilavilki, [{ x: 2, y: 3, w: 12, h: 10 }, { x: 5, y: 12, w: 6, h: 16 }]);
+  defObstacle('coals', MH_SPRITES.obstacles.coals[0], [{ x: 4, y: 4, w: 16, h: 8 }]);
+  OBST.hookahBig.dj = doubleProfile(OBST.hookahBig.hth);
+
+  function obstUpTime(d) {
+    return d.big ? d.dj.up : singleWindow(d.hth)[0];
+  }
+  function obstLandTime(d) {
+    return d.big ? d.dj.land : AIR_T;
+  }
+  // Minimum fair hit-box gap (px) between obstacle a (passed first) and b at world speed v:
+  // the corgi has to land from a, react, and be airborne high enough again when it reaches b.
+  function requiredGapPx(a, b, v) {
+    const t = obstLandTime(a) + REACT_T + obstUpTime(b) - obstUpTime(a);
+    return Math.max(8, (v + 6) * t - a.wHit);
+  }
+  // Max hit-box gap (px) at which two small obstacles can still both be cleared by ONE jump
+  function clusterMaxGap(a, b, v) {
+    const w = singleWindow(Math.max(a.hth, b.hth));
+    if (!w) return -1;
+    return ((w[1] - w[0]) - 0.24) * (v + 6) - (a.wHit + b.wHit + CORGI_HIT_W);
+  }
+
   const HEART_FULL_URI = MH_SPRITES.ui.heartFull.toDataURL();
   const HEART_EMPTY_URI = MH_SPRITES.ui.heartEmpty.toDataURL();
   const PINEAPPLE_URI = MH_SPRITES.fruits.pineapple.toDataURL();
@@ -36,6 +113,8 @@
   const btnHat = document.getElementById('btn-hat');
   const btnSound = document.getElementById('btn-sound');
   const soundLabel = document.getElementById('sound-label');
+  const btnMusic = document.getElementById('btn-music');
+  const musicIcon = document.getElementById('music-icon');
 
   const screenStart = document.getElementById('screen-start');
   const startLivesBadge = document.getElementById('start-lives-badge');
@@ -71,9 +150,10 @@
   const user = MH_TG.getUser();
   let saveState = MH_STORAGE.load();
   MH_AUDIO.setEnabled(saveState.sound);
+  MH_AUDIO.setMusicEnabled(saveState.music !== false);
 
   const params = new URLSearchParams(window.location.search);
-  const autoJump = params.get('autojump') === '1';
+  let autoJump = params.get('autojump') === '1';
 
   // ============================================================
   // CRISP BINARY PIXEL TEXT RENDERER
@@ -895,11 +975,20 @@
       animTimer: 0,
       runFrame: 0,
       sparkleTimer: 0,
+      jumps: 0,
+      airTime: 0,
+      flipT: -1,
     },
     obstacles: [],
     fruits: [],
     particles: [],
     popups: [],
+    puffs: [],
+    pending: null,
+    tail: null,
+    patternCount: 0,
+    hintT: 0,
+    spawnLog: [],
     spawnCooldown: 1.0,
     dustTimer: 0,
   };
@@ -944,7 +1033,7 @@
   }
 
   function resetRunWorld() {
-    WORLD.speed = 105;
+    WORLD.speed = speedAt(0);
     WORLD.score = 0;
     WORLD.runTime = 0;
     WORLD.introTime = 0;
@@ -960,11 +1049,20 @@
     WORLD.corgi.animTimer = 0;
     WORLD.corgi.runFrame = 0;
     WORLD.corgi.sparkleTimer = 0;
+    WORLD.corgi.jumps = 0;
+    WORLD.corgi.airTime = 0;
+    WORLD.corgi.flipT = -1;
     WORLD.obstacles = [];
     WORLD.fruits = [];
     WORLD.particles = [];
     WORLD.popups = [];
-    WORLD.spawnCooldown = 0.85;
+    WORLD.puffs = [];
+    WORLD.pending = null;
+    WORLD.tail = null;
+    WORLD.patternCount = 0;
+    WORLD.hintT = 0;
+    WORLD.spawnLog = [];
+    WORLD.spawnCooldown = 1.0;
     WORLD.dustTimer = 0;
     updateHUDPills(false);
   }
@@ -1022,55 +1120,172 @@
   // ============================================================
   // OBSTACLE & FRUIT SPAWNER
   // ============================================================
-  let lastObstacleKind = '';
-  function spawnObstacleWave() {
-    const kinds = ['hookah', 'shilavilki', 'coals'];
-    let kind = kinds[Math.floor(Math.random() * kinds.length)];
-    if (kind === lastObstacleKind) {
-      kind = kinds[(kinds.indexOf(kind) + 1) % kinds.length];
+  const FRUIT_KINDS = ['pineapple', 'peach', 'mango'];
+  const FRUIT_SPACING = 20;
+  let lastKinds = [];
+  let hintShown = false;
+  let doubleJumpCount = 0;
+
+  function randRange(a, b) {
+    return a + Math.random() * (b - a);
+  }
+
+  function pickSmallKind() {
+    let kind = 'coals';
+    for (let i = 0; i < 4; i++) {
+      const r = Math.random();
+      kind = r < 0.3 ? 'hookah' : r < 0.6 ? 'shilavilki' : 'coals';
+      const n = lastKinds.length;
+      const triple = n >= 2 && lastKinds[n - 1] === kind && lastKinds[n - 2] === kind;
+      const repeat = n >= 1 && lastKinds[n - 1] === kind && Math.random() < 0.5;
+      if (!triple && !repeat) break;
     }
-    lastObstacleKind = kind;
+    return kind;
+  }
 
-    let spr = MH_SPRITES.obstacles.hookah;
-    if (kind === 'shilavilki') spr = MH_SPRITES.obstacles.shilavilki;
-    else if (kind === 'coals') spr = MH_SPRITES.obstacles.coals[0];
+  // One pattern = a single obstacle, a "cluster" of two small ones (only when ONE jump can clear both) or a BIG hookah
+  function buildPattern(v) {
+    const rt = WORLD.runTime;
+    const r = Math.random();
+    if (rt >= 12 && WORLD.patternCount >= 3 && r < 0.2) {
+      return [{ kind: 'hookahBig', off: 0 }];
+    }
+    if (rt >= 8 && r < 0.38) {
+      const ka = pickSmallKind();
+      const kb = pickSmallKind();
+      const a = OBST[ka];
+      const b = OBST[kb];
+      const gMax = clusterMaxGap(a, b, v);
+      if (gMax >= 5) {
+        const g = Math.round(randRange(4, Math.max(4.5, gMax * 0.85)));
+        return [{ kind: ka, off: 0 }, { kind: kb, off: a.bx1 + g - b.bx0 }];
+      }
+    }
+    return [{ kind: pickSmallKind(), off: 0 }];
+  }
 
-    const obs = {
-      kind,
-      x: W + 14,
-      y: GROUND_Y - spr.height,
-      w: spr.width,
-      h: spr.height,
-    };
-    WORLD.obstacles.push(obs);
+  // Choose the NEXT pattern and the distance to it: always >= the fair minimum, then short / medium / long on top
+  function planNext() {
+    const v = WORLD.speed;
+    const items = buildPattern(v);
+    const first = OBST[items[0].kind];
+    const tail = WORLD.tail;
+    const early = WORLD.runTime < 15;
+    const r = Math.random();
+    let bucket = early
+      ? (r < 0.12 ? 'short' : r < 0.62 ? 'medium' : 'long')
+      : (r < 0.3 ? 'short' : r < 0.72 ? 'medium' : 'long');
+    if (first.big && bucket === 'short') bucket = 'medium';
+    const extra = bucket === 'short' ? randRange(0.02, 0.14) : bucket === 'medium' ? randRange(0.28, 0.65) : randRange(0.85, 1.5);
+    const req = requiredGapPx(tail.def, first, v);
+    const gap = req + extra * v;
+    WORLD.pending = { items, bucket, gap, req };
+    WORLD.spawnCooldown = (gap + tail.off + tail.def.bx1 - first.bx0) / v;
+    placeGapFruit(tail, gap, v, bucket);
+  }
 
-    const fruitKinds = ['pineapple', 'peach', 'mango'];
-    if (Math.random() < 0.78) {
-      const fk = fruitKinds[Math.floor(Math.random() * fruitKinds.length)];
-      const fs = MH_SPRITES.fruits[fk];
-      const topClear = obs.y - fs.height - 14 - Math.random() * 12;
+  // Fruit in an obstacle-free stretch: a single one, an arc or a row, at jump height
+  function placeGapFruit(tail, gap, v, bucket) {
+    const chance = bucket === 'long' ? 0.85 : bucket === 'medium' ? 0.5 : 0;
+    if (Math.random() >= chance) return;
+    const fk = FRUIT_KINDS[Math.floor(Math.random() * FRUIT_KINDS.length)];
+    const fs = MH_SPRITES.fruits[fk];
+    const marginL = 0.3 * v;
+    const marginR = 0.75 * v;
+    const avail = gap - marginL - marginR;
+    const nMax = Math.floor((avail - fs.width) / FRUIT_SPACING) + 1;
+    if (nMax < 1) return;
+    let shape = 'single';
+    let n = 1;
+    const r = Math.random();
+    if (nMax >= 3 && r < 0.45) {
+      shape = 'arc';
+      n = nMax >= 5 && Math.random() < 0.5 ? 5 : 3;
+    } else if (nMax >= 3 && r < 0.75) {
+      shape = 'row';
+      n = Math.min(nMax, Math.random() < 0.4 ? 4 : 3);
+    }
+    const groupW = (n - 1) * FRUIT_SPACING + fs.width;
+    const startX = W + 14 + tail.off + tail.def.bx1 + marginL + Math.random() * Math.max(0, avail - groupW);
+    const rowY = GROUND_Y - 50 - Math.random() * 14;
+    const singleY = GROUND_Y - 48 - Math.random() * 20;
+    const mid = (n - 1) / 2;
+    for (let i = 0; i < n; i++) {
+      let y = singleY;
+      if (shape === 'row') y = rowY;
+      else if (shape === 'arc') {
+        const k = 1 - Math.pow((i - mid) / mid, 2);
+        y = GROUND_Y - 46 - 26 * k;
+      }
       WORLD.fruits.push({
         kind: fk,
-        x: obs.x + Math.round((obs.w - fs.width) / 2) + Math.round((Math.random() - 0.5) * 6),
-        baseY: Math.max(GROUND_Y - 72, Math.min(GROUND_Y - 46, topClear)),
+        x: startX + i * FRUIT_SPACING,
+        baseY: y,
         w: fs.width,
         h: fs.height,
         phase: Math.random() * Math.PI * 2,
         collected: false,
       });
-    } else {
-      const fk = fruitKinds[Math.floor(Math.random() * fruitKinds.length)];
-      const fs = MH_SPRITES.fruits[fk];
-      WORLD.fruits.push({
-        kind: fk,
-        x: obs.x + 68,
-        baseY: GROUND_Y - 44 - Math.random() * 18,
-        w: fs.width,
-        h: fs.height,
-        phase: Math.random() * Math.PI * 2,
-        collected: false,
-      });
     }
+  }
+
+  // The classic fruit hovering over an obstacle (a BIG hookah gets a high one that needs the double jump)
+  function placeFruitAbove(items) {
+    const first = items[0];
+    const last = items[items.length - 1];
+    const dF = OBST[first.kind];
+    const dL = OBST[last.kind];
+    const big = items.some(it => OBST[it.kind].big);
+    if (Math.random() >= (big ? 0.9 : 0.78)) return;
+    const fk = FRUIT_KINDS[Math.floor(Math.random() * FRUIT_KINDS.length)];
+    const fs = MH_SPRITES.fruits[fk];
+    const topH = Math.max(...items.map(it => OBST[it.kind].h));
+    const cx = W + 14 + (first.off + dF.bx0 + last.off + dL.bx1) / 2;
+    const topClear = GROUND_Y - topH - fs.height - 14 - Math.random() * 12;
+    const baseY = big
+      ? GROUND_Y - 98 - Math.random() * 8
+      : Math.max(GROUND_Y - 72, Math.min(GROUND_Y - 46, topClear));
+    WORLD.fruits.push({
+      kind: fk,
+      x: cx - fs.width / 2 + Math.round((Math.random() - 0.5) * 6),
+      baseY,
+      w: fs.width,
+      h: fs.height,
+      phase: Math.random() * Math.PI * 2,
+      collected: false,
+    });
+  }
+
+  function spawnPattern(p) {
+    for (const it of p.items) {
+      const d = OBST[it.kind];
+      WORLD.obstacles.push({ kind: it.kind, x: W + 14 + it.off, y: GROUND_Y - d.h, w: d.w, h: d.h });
+      lastKinds.push(it.kind);
+    }
+    if (lastKinds.length > 6) lastKinds = lastKinds.slice(-6);
+    const lastIt = p.items[p.items.length - 1];
+    WORLD.tail = { def: OBST[lastIt.kind], off: lastIt.off };
+    WORLD.patternCount += 1;
+    WORLD.spawnLog.push({
+      t: +WORLD.runTime.toFixed(2),
+      kinds: p.items.map(it => it.kind),
+      bucket: p.bucket,
+      gap: Math.round(p.gap || 0),
+      req: Math.round(p.req || 0),
+      v: Math.round(WORLD.speed),
+    });
+    if (WORLD.spawnLog.length > 600) WORLD.spawnLog.shift();
+    placeFruitAbove(p.items);
+    planNext();
+  }
+
+  function spawnNextPattern() {
+    if (!WORLD.pending) {
+      WORLD.pending = { items: [{ kind: Math.random() < 0.5 ? 'coals' : 'hookah', off: 0 }], bucket: 'start', gap: 0, req: 0 };
+    }
+    const p = WORLD.pending;
+    WORLD.pending = null;
+    spawnPattern(p);
   }
 
   // ============================================================
@@ -1078,17 +1293,64 @@
   // ============================================================
   function requestJump() {
     if (mode !== 'playing') return;
-    WORLD.corgi.jumpBuffer = 0.13;
+    const c = WORLD.corgi;
+    if (c.grounded) {
+      c.jumpBuffer = 0.13;
+      return;
+    }
+    const heightAboveGround = CORGI_GROUND_TOP - c.y;
+    const aboutToLand = c.vy > 0 && heightAboveGround < 14;
+    if (c.jumps < 2 && c.airTime > 0.04 && !aboutToLand) {
+      executeDoubleJump();
+    } else {
+      c.jumpBuffer = 0.13;   // tap just before landing -> jump right on touchdown
+    }
   }
 
   function executeJump() {
     const c = WORLD.corgi;
-    c.vy = -305;
+    c.vy = -JUMP_V;
     c.grounded = false;
     c.jumpBuffer = 0;
+    c.jumps = 1;
+    c.airTime = 0;
+    c.flipT = -1;
     spawnDust(c.x + 12, GROUND_Y, 6, 1.4);
     MH_AUDIO.jump();
     MH_TG.haptic('light');
+  }
+
+  function executeDoubleJump() {
+    const c = WORLD.corgi;
+    c.vy = -JUMP2_V;
+    c.jumps = 2;
+    c.jumpBuffer = 0;
+    c.flipT = 0;
+    doubleJumpCount += 1;
+    // tiny minimalist puff under the paws
+    const px = c.x + 14;
+    const py = c.y + 17;
+    WORLD.puffs.push({ x: px, y: py, t: 0 });
+    for (let i = 0; i < 8; i++) {
+      const ang = Math.PI * (0.1 + 0.8 * (i / 7));
+      WORLD.particles.push({
+        x: px,
+        y: py,
+        vx: Math.cos(ang) * 46 * (i % 2 ? 1 : 0.7) * (i < 4 ? -1 : 1) * 0.6 + (i - 3.5) * 4,
+        vy: Math.sin(ang) * 26,
+        life: 0.3,
+        maxLife: 0.3,
+        size: 1,
+        color: i % 2 ? '#FFF9F2' : '#FFC2D4',
+        grav: 10,
+      });
+    }
+    if (!saveState.doubleSeen) {
+      saveState.doubleSeen = true;
+      MH_STORAGE.save(saveState);
+    }
+    MH_AUDIO.doubleJump();
+    MH_TG.haptic('medium');
   }
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -1257,6 +1519,22 @@
     MH_STORAGE.save(saveState);
     MH_AUDIO.click();
     refreshStartUI();
+  });
+
+  function refreshMusicUI() {
+    const on = saveState.music !== false;
+    musicIcon.src = (on ? MH_SPRITES.ui.noteOn : MH_SPRITES.ui.noteOff).toDataURL();
+    btnMusic.classList.toggle('off', !on);
+    btnMusic.setAttribute('aria-pressed', String(on));
+    btnMusic.title = on ? 'Музыка: вкл' : 'Музыка: выкл';
+  }
+  refreshMusicUI();
+  btnMusic.addEventListener('click', () => {
+    saveState.music = saveState.music === false;
+    MH_STORAGE.save(saveState);
+    MH_AUDIO.setMusicEnabled(saveState.music);
+    refreshMusicUI();
+    MH_AUDIO.click();
   });
 
   btnSound.addEventListener('click', () => {
@@ -1600,20 +1878,14 @@
     if (WORLD.crashFlash > 0) WORLD.crashFlash = Math.max(0, WORLD.crashFlash - dt);
 
     WORLD.runTime += dt;
-    WORLD.speed = Math.min(220, 105 + WORLD.runTime * 2.1);
+    WORLD.speed = speedAt(WORLD.runTime);
 
     WORLD.scrollFarSky = (WORLD.scrollFarSky + WORLD.speed * 0.065 * dt) % FAR_SKY_W;
     WORLD.scrollSkyline = (WORLD.scrollSkyline + WORLD.speed * 0.14 * dt) % MID_SKY_W;
     WORLD.scrollPalms = (WORLD.scrollPalms + WORLD.speed * 0.34 * dt) % 140;
     WORLD.scrollGround = (WORLD.scrollGround + WORLD.speed * dt) % 48;
 
-    if (autoJump && WORLD.corgi.grounded) {
-      const danger = WORLD.obstacles.find(o => o.x > WORLD.corgi.x + 15 && o.x < WORLD.corgi.x + 44 + WORLD.speed * 0.13);
-      const bonusFruit = WORLD.fruits.find(f => !f.collected && f.x > WORLD.corgi.x + 8 && f.x < WORLD.corgi.x + 34);
-      if (danger || bonusFruit) {
-        requestJump();
-      }
-    }
+    if (autoJump) runAutopilot();
 
     const c = WORLD.corgi;
     if (c.jumpBuffer > 0) c.jumpBuffer -= dt;
@@ -1622,7 +1894,12 @@
     }
 
     if (!c.grounded) {
-      c.vy += 740 * dt;
+      c.airTime += dt;
+      if (c.flipT >= 0) {
+        c.flipT += dt;
+        if (c.flipT >= FLIP_DUR) c.flipT = -1;
+      }
+      c.vy += GRAVITY * dt;
       c.y += c.vy * dt;
       // Airborne jump sparkle trail
       c.sparkleTimer += dt;
@@ -1644,6 +1921,9 @@
         c.y = CORGI_GROUND_TOP;
         c.vy = 0;
         c.grounded = true;
+        c.jumps = 0;
+        c.airTime = 0;
+        c.flipT = -1;
         spawnDust(c.x + 14, GROUND_Y, 7, 1.8);
       }
     } else {
@@ -1658,9 +1938,20 @@
 
     WORLD.spawnCooldown -= dt;
     if (WORLD.spawnCooldown <= 0) {
-      spawnObstacleWave();
-      const minGapTime = 1.05 * (105 / WORLD.speed);
-      WORLD.spawnCooldown = Math.max(0.68, minGapTime + Math.random() * 0.65);
+      spawnNextPattern();
+    }
+
+    // one-time hint when the first BIG hookah rolls in
+    if (!hintShown && !saveState.doubleSeen && WORLD.obstacles.some(o => o.kind === 'hookahBig' && o.x < W - 12)) {
+      hintShown = true;
+      WORLD.hintT = 2.8;
+    }
+    if (WORLD.hintT > 0) WORLD.hintT -= dt;
+    for (let i = WORLD.puffs.length - 1; i >= 0; i--) {
+      const pf = WORLD.puffs[i];
+      pf.t += dt;
+      pf.x -= WORLD.speed * dt * 0.8;
+      if (pf.t > 0.32) WORLD.puffs.splice(i, 1);
     }
 
     const cx1 = c.x + 6;
@@ -1675,13 +1966,16 @@
         WORLD.obstacles.splice(i, 1);
         continue;
       }
-      const ox1 = o.x + (o.kind === 'hookah' ? 5 : 4);
-      const oy1 = o.y + 4;
-      const ox2 = o.x + o.w - 4;
-      const oy2 = o.y + o.h;
-      if (cx1 < ox2 && cx2 > ox1 && cy1 < oy2 && cy2 > oy1) {
-        triggerCrash();
-        return;
+      const def = OBST[o.kind];
+      for (const r of def.rects) {
+        const ox1 = o.x + r.x;
+        const oy1 = o.y + r.y;
+        const ox2 = ox1 + r.w;
+        const oy2 = oy1 + r.h;
+        if (cx1 < ox2 && cx2 > ox1 && cy1 < oy2 && cy2 > oy1) {
+          triggerCrash();
+          return;
+        }
       }
     }
 
@@ -1705,6 +1999,82 @@
     }
 
     updateParticles(dt);
+  }
+
+  // Debug/demo autopilot (?autojump=1): jumps over obstacle groups, double-jumps the BIG hookah, grabs fruit when safe
+  function runAutopilot() {
+    const c = WORLD.corgi;
+    const v = WORLD.speed;
+    const front = c.x + 25;
+    const rear = c.x + 6;
+    const list = WORLD.obstacles
+      .map(o => { const d = OBST[o.kind]; return { d, l: o.x + d.bx0, r: o.x + d.bx1 }; })
+      .filter(e => e.r > rear)
+      .sort((a, b) => a.l - b.l);
+    let target = null;
+    let groupR = 0;
+    if (list.length) {
+      target = list[0];
+      groupR = target.r;
+      for (let i = 1; i < list.length; i++) {
+        if (list[i].l - groupR < 45) groupR = Math.max(groupR, list[i].r);
+        else break;
+      }
+    }
+    if (target) {
+      const t = (target.l - front) / v;
+      if (c.grounded) {
+        // take off as late as is still safe (the fairness model assumes the player may do exactly that)
+        let hMax = target.d.hth;
+        for (const e of list) if (e.l <= groupR) hMax = Math.max(hMax, e.d.hth);
+        const lead = target.d.big ? 0.36 : singleWindow(hMax)[0] + 0.05;
+        if (t <= lead) { requestJump(); return; }
+      } else if (target.d.big && c.jumps === 1 && c.airTime >= DJ_TS - 0.02 && t <= 0.3 && t > -0.3) {
+        requestJump();
+        return;
+      }
+    }
+    if (c.grounded) {
+      // next obstacle: the visible one, or the one that is about to roll in (the bot may peek at the spawn timer)
+      const tVisible = target ? (target.l - front) / v : 99;
+      const tObs = Math.min(tVisible, WORLD.spawnCooldown + (W + 14 - front) / v);
+      const f = WORLD.fruits.find(fr => !fr.collected && fr.x > front - 8 && (fr.x - front) / v < 0.26 && fr.baseY > GROUND_Y - 80);
+      if (f && tObs > (target && target.d.big ? 1.6 : 1.25)) requestJump();
+    }
+  }
+
+  // Somersault frames: jump pose (+ santa hat) rotated in 45-degree nearest-neighbour steps, pre-baked once
+  const flipFrames = {};
+  function getFlipFrame(step, hat) {
+    const key = step + (hat ? 'h' : 'n');
+    if (flipFrames[key]) return flipFrames[key];
+    const spr = MH_SPRITES.corgi.jump;
+    const M = 6;
+    let cw = spr.width + M * 2;
+    let ch = spr.height + M * 2;
+    if (cw % 2) cw += 1;
+    if (ch % 2) ch += 1;
+    const comp = document.createElement('canvas');
+    comp.width = cw;
+    comp.height = ch;
+    const cctx = comp.getContext('2d');
+    cctx.imageSmoothingEnabled = false;
+    const ox = Math.floor((cw - spr.width) / 2);
+    const oy = Math.floor((ch - spr.height) / 2);
+    cctx.drawImage(spr, ox, oy);
+    if (hat) cctx.drawImage(MH_SPRITES.santaHat, ox + HAT_ANCHORS.jump.x, oy + HAT_ANCHORS.jump.y);
+    let D = Math.ceil(Math.hypot(cw, ch));
+    if (D % 2) D += 1;
+    const out = document.createElement('canvas');
+    out.width = D;
+    out.height = D;
+    const octx = out.getContext('2d');
+    octx.imageSmoothingEnabled = false;
+    octx.translate(D / 2, D / 2);
+    octx.rotate((step * Math.PI * 2) / FLIP_STEPS);
+    octx.drawImage(comp, -cw / 2, -ch / 2);
+    flipFrames[key] = { canvas: out, D, cx: cw / 2 - ox, cy: ch / 2 - oy };
+    return flipFrames[key];
   }
 
   function updateParticles(dt) {
@@ -1909,7 +2279,7 @@
     ctx.drawImage(trashSpr, bX + bW - 11, MENU_GROUND_Y - trashSpr.height);
 
     // Pixel cat perched on top right parapet of storefront, flicking tail
-    const catFrame = Math.floor(WORLD.time * 2.4) % 2;
+    const catFrame = ((Math.floor(WORLD.time * 2.4) % 2) + 2) % 2;
     const catSpr = MH_SPRITES.ambient.catRoof[catFrame];
     ctx.drawImage(catSpr, bX + bW - 22, bTop - catSpr.height);
 
@@ -2427,6 +2797,8 @@
       const oy = Math.round(o.y);
       if (o.kind === 'hookah') {
         ctx.drawImage(MH_SPRITES.obstacles.hookah, ox, oy);
+      } else if (o.kind === 'hookahBig') {
+        ctx.drawImage(MH_SPRITES.obstacles.hookahBig, ox, oy);
       } else if (o.kind === 'shilavilki') {
         ctx.drawImage(MH_SPRITES.obstacles.shilavilki, ox, oy);
       } else if (o.kind === 'coals') {
@@ -2476,8 +2848,42 @@
         });
       }
     } else {
-      const pose = WORLD.corgi.grounded ? `run${WORLD.corgi.runFrame}` : 'jump';
-      drawCorgiPose(ctx, pose, WORLD.corgi.x, WORLD.corgi.y, PLAY_SCALE);
+      const cg = WORLD.corgi;
+      if (!cg.grounded && cg.flipT >= 0) {
+        const step = Math.min(FLIP_STEPS - 1, Math.floor((cg.flipT / FLIP_DUR) * FLIP_STEPS));
+        const fr = getFlipFrame(step, saveState.santaHat);
+        ctx.drawImage(
+          fr.canvas,
+          Math.round(cg.x + MH_SPRITES.corgi.jump.width / 2 - fr.cx - 0) | 0,
+          Math.round(cg.y + MH_SPRITES.corgi.jump.height / 2 - fr.cy) | 0
+        );
+      } else {
+        const pose = cg.grounded ? `run${cg.runFrame}` : 'jump';
+        drawCorgiPose(ctx, pose, cg.x, cg.y, PLAY_SCALE);
+      }
+    }
+
+    // double-jump puffs (tiny, pixel-clean)
+    for (const pf of WORLD.puffs) {
+      const k = pf.t / 0.32;
+      const px = Math.round(pf.x);
+      const py = Math.round(pf.y);
+      ctx.fillStyle = '#FFF9F2';
+      if (k < 0.34) {
+        ctx.fillRect(px - 3, py - 1, 6, 2);
+      } else if (k < 0.67) {
+        ctx.fillRect(px - 5, py - 2, 10, 2);
+        ctx.fillStyle = '#FFC2D4';
+        ctx.fillRect(px - 4, py, 8, 1);
+      } else {
+        ctx.fillRect(px - 7, py - 3, 2, 1);
+        ctx.fillRect(px + 5, py - 3, 2, 1);
+        ctx.fillRect(px - 5, py - 1, 1, 1);
+        ctx.fillRect(px + 4, py - 1, 1, 1);
+        ctx.fillStyle = '#FFC2D4';
+        ctx.fillRect(px - 2, py, 1, 1);
+        ctx.fillRect(px + 1, py, 1, 1);
+      }
     }
 
     for (const p of WORLD.particles) {
@@ -2491,6 +2897,11 @@
         align: 'center',
         outline: '#140C1C',
       });
+    }
+
+    if (WORLD.hintT > 0 && mode === 'playing' && Math.floor(WORLD.hintT * 4) % 4 !== 0) {
+      drawPixelText(ctx, 'ТАП-ТАП!', Math.round(W / 2), GROUND_Y - 150, 8, '#FFD100', { align: 'center', outline: '#140C1C' });
+      drawPixelText(ctx, 'ДВОЙНОЙ ПРЫЖОК', Math.round(W / 2), GROUND_Y - 138, 8, '#FFF9F2', { align: 'center', outline: '#140C1C' });
     }
 
     ctx.drawImage(vignetteCanvas, 0, 0);
@@ -2533,11 +2944,12 @@
     }
   }
 
+  let debugFrozen = false;
   let lastTs = performance.now();
   function loop(ts) {
-    const dt = Math.min(0.05, (ts - lastTs) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (ts - lastTs) / 1000));
     lastTs = ts;
-    update(dt);
+    if (!debugFrozen) update(dt);
     renderMainCanvas();
     renderGameOverDiorama();
     requestAnimationFrame(loop);
@@ -2555,6 +2967,14 @@
       WORLD.corgi.vy = 0;
       WORLD.corgi.grounded = true;
       WORLD.spawnCooldown = 3.0;
+      WORLD.pending = null;
+      WORLD.tail = null;
+      WORLD.puffs = [];
+      WORLD.hitFreeze = 0;
+      WORLD.crashFlash = 0;
+      WORLD.corgi.jumps = 0;
+      WORLD.corgi.airTime = 0;
+      WORLD.corgi.flipT = -1;
     },
     setScore: (s) => {
       WORLD.score = s;
@@ -2564,12 +2984,35 @@
       }
       updateHUDPills(false);
     },
-    spawnObstacle: (kind) => {
-      let spr = MH_SPRITES.obstacles.hookah;
-      if (kind === 'shilavilki') spr = MH_SPRITES.obstacles.shilavilki;
-      if (kind === 'coals') spr = MH_SPRITES.obstacles.coals[0];
-      WORLD.obstacles.push({ kind, x: 112, y: GROUND_Y - spr.height, w: spr.width, h: spr.height });
+    spawnObstacle: (kind, x = 112) => {
+      const d = OBST[kind];
+      WORLD.obstacles.push({ kind, x, y: GROUND_Y - d.h, w: d.w, h: d.h });
     },
+    getWorld: () => ({
+      speed: WORLD.speed,
+      runTime: WORLD.runTime,
+      score: WORLD.score,
+      corgi: { x: WORLD.corgi.x, y: WORLD.corgi.y, vy: WORLD.corgi.vy, grounded: WORLD.corgi.grounded, jumps: WORLD.corgi.jumps, airTime: WORLD.corgi.airTime, flipT: WORLD.corgi.flipT },
+      obstacles: WORLD.obstacles.map(o => ({ kind: o.kind, x: o.x, y: o.y, w: o.w, h: o.h })),
+      fruits: WORLD.fruits.map(f => ({ kind: f.kind, x: f.x, baseY: f.baseY })),
+      hitFreeze: WORLD.hitFreeze,
+      doubles: doubleJumpCount,
+      spawnLog: WORLD.spawnLog.slice(),
+      groundY: GROUND_Y,
+    }),
+    setAutoJump: (on) => { autoJump = !!on; },
+    setFrozen: (on) => { debugFrozen = !!on; },
+    markDoubleSeen: () => { saveState.doubleSeen = true; WORLD.hintT = 0; },
+    step: (frames = 1) => { for (let i = 0; i < frames; i++) update(1 / 60); },
+    setRunTime: (t) => { WORLD.runTime = t; },
+    // fast-forward the playing world without rendering (for gap/fairness statistics)
+    simulate: (seconds, dt = 1 / 60) => {
+      const n = Math.round(seconds / dt);
+      for (let i = 0; i < n && mode === 'playing'; i++) update(dt);
+      return { mode, runTime: WORLD.runTime, score: WORLD.score };
+    },
+    OBST: () => JSON.parse(JSON.stringify(OBST)),
+    constants: () => ({ AIR_T, DJ_TS, JUMP_V, JUMP2_V, GRAVITY, big: OBST.hookahBig.dj }),
     spawnFruit: (kind, x = 114, y = GROUND_Y - 56) => {
       const fs = MH_SPRITES.fruits[kind];
       WORLD.fruits.push({ kind, x, baseY: y, w: fs.width, h: fs.height, phase: 0, collected: false });

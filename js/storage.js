@@ -55,6 +55,7 @@ window.MH_STORAGE = (function () {
       subscribed: false,
       santaHat: true,
       sound: true,
+      music: true,
       gamesPlayed: 0,
     };
   }

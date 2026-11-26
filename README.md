@@ -8,11 +8,15 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
 - **Subscription Gate (Demo Stub)**: `Подпишитесь на канал, чтобы играть` with `Подписаться` and `Проверить подписку` buttons.
 - **Intro Cutscene**: Corgi appears from behind wagging its tail, spins 360° around in place, crouches ready, and launches into a sprint.
 - **Signature Corgi Butt Wiggle**: Custom 4-frame running animation with exaggerated rump & stubby-tail wiggle, toggleable Santa hat, and paw dust particles.
-- **Obstacles**:
-  - Hookah silhouette (matching reference)
-  - Hookah fork-poker (*шило-вилка*)
-  - Burning coals pile with flickering embers & animated wavy smoke (`≈`)
-- **Fruits (+1 point each)**: Pineapple, Peach, and Mango float above obstacles/arcs; jumping obstacles alone awards 0 points.
+- **Obstacles** (all drawn on the same 1x pixel grid, ink outline + teal glass / gold accents so they pop against the sunset):
+  - Small hookah and a **BIG hookah** (72 px tall, can't be cleared by a single jump — needs a double jump). The glass flask has a pixel glare.
+  - Shila-vilka: a steel fork with exactly three prongs.
+  - Burning coals pile with flickering embers & animated wavy smoke (`≈`).
+- **Fair, varied spacing**: gaps are drawn from short / medium / long buckets and occasionally pairs/clusters of two small obstacles. Every gap is at least the physics-derived minimum for the current speed (landing + reaction margin), clusters only appear when one jump can clear both, and the big hookah only appears after ~12 s with extra recovery room. Hit boxes are per-part (stem/flask) so empty air next to the hookah stem is safe.
+- **Double jump**: a second tap / `Space` / `↑` in the air gives one extra jump per airtime, with an 8-step pixel somersault (nearest-neighbour rotated sprite) and a tiny puff. A one-time `ТАП-ТАП!` hint shows when the first big hookah arrives.
+- **Speed**: starts calm (70 px/s) and eases into the original curve (105 + 2.1·t, capped at 220).
+- **Music**: looping WebAudio chiptune (`js/audio.js`, "Mango Beach", 8 bars @ 118 BPM; pulse lead, triangle bass, off-beat stabs, soft drums) at low volume. Starts on the first tap, pauses when the app is hidden. Pixel note icon in the menu toggles it; the choice is saved in `localStorage` (`music`) separately from SFX (`ЗВУК`).
+- **Fruits (+1 point each)**: Pineapple, Peach, and Mango float above obstacles, and also appear in obstacle-free stretches as singles, arcs and rows at jump height (a high one above the big hookah rewards the double jump); jumping obstacles alone awards 0 points.
 - **Daily Lives & Game Over**:
   - 5 hearts in HUD for regular players, persisted in `localStorage` with a 24-hour reset after the last daily life is spent.
   - VIP Telegram usernames (`@pnkmnmr`, `@musthave_pinkman`) get **100 lives/day**. Detected client-side from `Telegram.WebApp.initDataUnsafe.user.username` (case-insensitive, no `@`). The UI shows a compact pixel heart + `×N` counter instead of 100 hearts.
@@ -34,7 +38,7 @@ Open `http://localhost:8080` in Chrome/Firefox (enable mobile viewport `390×844
 - `?lives=0..N` — overrides remaining daily lives for testing (N is 5, or 100 for VIP).
 - `?tguser=<username>` — mocks a Telegram username (for VIP / lives testing).
 - `?sub=1` — skips the mock subscription gate.
-- `?autojump=1` — enables demo auto-jumper.
+- `?autojump=1` — enables the demo autopilot (jumps, double-jumps the big hookah, grabs fruit when safe).
 
 ## Deploy to a Static Host
 Upload the contents of `musthave-run/` as-is (no build command needed):
