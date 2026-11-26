@@ -73,13 +73,47 @@
   defObstacle('shilavilki', MH_SPRITES.obstacles.shilavilki, [{ x: 2, y: 3, w: 12, h: 10 }, { x: 5, y: 12, w: 6, h: 16 }]);
   defObstacle('coals', MH_SPRITES.obstacles.coals[0], [{ x: 4, y: 4, w: 16, h: 8 }]);
   OBST.hookahBig.dj = doubleProfile(OBST.hookahBig.hth);
+  // Low-flying bird: hovers `lift` px above the ground. Its hit rect ends 13px above the ground, so the
+  // ducking corgi (hit box 9px tall) slides under it while a standing one (14px) is hit. It can also be
+  // jumped (feet must rise > 19px), so the fairness model treats it as a small obstacle of that height.
+  defObstacle('bird', MH_SPRITES.obstacles.bird[0], [{ x: 2, y: 1, w: 12, h: 7 }]);
+  OBST.bird.lift = 12;
+  OBST.bird.hth = 20;
+  OBST.bird.air = true;
+  // MUSTHAVE tin trampoline: no hit rects, it launches the corgi high (with a flip)
+  OBST.tramp = { kind: 'tramp', w: 24, h: 10, rects: [], bx0: 0, bx1: 24, by0: 0, wHit: 24, hth: 0, big: false, pad: true };
+  const DUCK_TOP = 9;              // ducking hit box reaches 9px above the ground
+  const FAST_FALL_V = 430;
+  function trampHeight() { return Math.max(70, Math.min(130, GROUND_Y - 74)); }
+  function trampV() { return Math.sqrt(2 * GRAVITY * trampHeight()); }
+  function trampAir() { return (2 * trampV()) / GRAVITY; }
 
   function obstUpTime(d) {
+    if (d.pad) return 0;
     return d.big ? d.dj.up : singleWindow(d.hth)[0];
   }
   function obstLandTime(d) {
+    if (d.pad) return trampAir() + 0.35;   // the bounce may start until the rear paw leaves the tin
     return d.big ? d.dj.land : AIR_T;
   }
+
+  // Features unlock progressively (run seconds) so the early game stays calm
+  const UNLOCK = { combo: 0, tramp: 15, golden: 20, magnet: 25, bird: 30, shield: 35, rain: 40, smoke: 50 };
+  const RAIN_DUR = 4.6;
+  const MAGNET_DUR = 5;
+  const MAGNET_R = 78;
+  const INVULN_T = 1.3;
+  const COMBO_STEPS = [0, 3, 6, 10, 15];   // streak needed for x2, x3, x4, x5
+  const HINTS = {
+    double: ['ТАП-ТАП!', 'ДВОЙНОЙ ПРЫЖОК'],
+    combo: ['КОМБО!', 'ФРУКТЫ ПОДРЯД'],
+    tramp: ['ПАЧКА-БАТУТ!', 'ПОДКИНЕТ ВЫСОКО'],
+    golden: ['ЗОЛОТОЙ ФРУКТ', '+5 ОЧКОВ'],
+    magnet: ['УГОЛЕК-МАГНИТ', 'ТЯНЕТ ФРУКТЫ'],
+    bird: ['ПТИЦА! ПРИГНИСЬ', 'СВАЙП ВНИЗ'],
+    shield: ['КОЛПАК-ЩИТ', 'СПАСЕТ ОТ УДАРА'],
+    smoke: ['ДЫМ ОТ УГЛЕЙ!', 'СМОТРИ СКВОЗЬ'],
+  };
   // Minimum fair hit-box gap (px) between obstacle a (passed first) and b at world speed v:
   // the corgi has to land from a, react, and be airborne high enough again when it reaches b.
   function requiredGapPx(a, b, v) {
@@ -108,6 +142,13 @@
 
   hudFruitIcon.src = PINEAPPLE_URI;
   hudHeartIcon.src = HEART_FULL_URI;
+
+  const hudComboEl = document.getElementById('hud-combo');
+  const hudMagnetEl = document.getElementById('hud-magnet');
+  const hudMagnetT = document.getElementById('hud-magnet-t');
+  const hudShieldEl = document.getElementById('hud-shield');
+  document.getElementById('hud-magnet-icon').src = MH_SPRITES.pickups.coal.toDataURL();
+  document.getElementById('hud-shield-icon').src = MH_SPRITES.pickups.hat.toDataURL();
 
   const topControls = document.getElementById('top-controls');
   const btnHat = document.getElementById('btn-hat');
@@ -160,12 +201,12 @@
   // ============================================================
   const textScratch = document.createElement('canvas');
   textScratch.width = 210;
-  textScratch.height = 24;
+  textScratch.height = 32;
   const textCtx = textScratch.getContext('2d');
 
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = 210;
-  maskCanvas.height = 24;
+  maskCanvas.height = 32;
   const maskCtx = maskCanvas.getContext('2d');
 
   function drawOutlineTextMask(imgData, w, h, hexColor) {
@@ -237,6 +278,31 @@
       targetCtx.drawImage(sc, dx + 1, dy + 1);
     }
     targetCtx.drawImage(textScratch, pad, pad, tw, th, dx, dy, tw, th);
+  }
+
+  // Same crisp text, rendered once per (text, size, colour) and then blitted - used for per-frame HUD text
+  const textCache = new Map();
+  function drawPixelTextCached(targetCtx, text, x, y, size, color, opts = {}) {
+    const str = String(text);
+    const key = str + '|' + size + '|' + color + '|' + (opts.outline || '');
+    let e = textCache.get(key);
+    if (!e) {
+      textCtx.font = `${size}px "PressStart2P", monospace`;
+      const mw = textCtx.measureText(str).width;
+      const c = document.createElement('canvas');
+      c.width = Math.min(208, Math.ceil(mw) + 8);
+      c.height = size + 10;
+      const cc = c.getContext('2d');
+      cc.imageSmoothingEnabled = false;
+      drawPixelText(cc, str, 2, 2, size, color, { outline: opts.outline });
+      e = { c, mw };
+      if (textCache.size > 240) textCache.clear();
+      textCache.set(key, e);
+    }
+    let dx = Math.round(x);
+    if (opts.align === 'center') dx = Math.round(x - e.mw / 2);
+    else if (opts.align === 'right') dx = Math.round(x - e.mw);
+    targetCtx.drawImage(e.c, dx - 2, Math.round(y) - 2);
   }
 
   // ============================================================
@@ -857,6 +923,8 @@
     crouch: { x: 15, y: -1 },
     jump: { x: 15, y: -2 },
     sleep: { x: 24, y: -1 },
+    slide0: { x: 19, y: -4 },
+    slide1: { x: 19, y: -4 },
   };
 
   function drawCorgiPose(targetCtx, poseKey, x, y, scale = 1) {
@@ -867,6 +935,8 @@
     if (poseKey.startsWith('run')) {
       const idx = parseInt(poseKey.slice(3), 10) || 0;
       sprite = sprites.run[idx];
+    } else if (poseKey.startsWith('slide')) {
+      sprite = sprites.slide[parseInt(poseKey.slice(5), 10) || 0];
     } else if (poseKey === 'sideLeft') {
       sprite = sprites.sideLeft;
       anchor = { x: sprite.width - HAT_ANCHORS.sideRight.x - MH_SPRITES.santaHat.width, y: HAT_ANCHORS.sideRight.y };
@@ -978,6 +1048,7 @@
       jumps: 0,
       airTime: 0,
       flipT: -1,
+      wasDucking: false,
     },
     obstacles: [],
     fruits: [],
@@ -991,7 +1062,37 @@
     spawnLog: [],
     spawnCooldown: 1.0,
     dustTimer: 0,
+    // feature round 3
+    pickups: [],
+    combo: 0,
+    mult: 1,
+    magnetT: 0,
+    shield: false,
+    invulnT: 0,
+    softFlash: 0,
+    rain: null,
+    nextRainAt: UNLOCK.rain,
+    smoke: null,
+    nextSmokeAt: UNLOCK.smoke,
+    nextPickupAt: UNLOCK.magnet,
+    lastGoldenAt: -99,
+    toasts: [],
+    banner: null,
+    duckKey: false,
+    duckTouch: false,
+    duckMinUntil: 0,
+    botDuck: false,
+    stats: null,
   };
+
+  function newStats() {
+    return {
+      tramps: 0, bounces: 0, birds: 0, birdsPassed: 0, ducks: 0, fastFalls: 0,
+      magnets: 0, shields: 0, shieldBreaks: 0, golden: 0, goldenSpawned: 0,
+      pickupsSpawned: 0, rains: 0, rainFruit: 0, smokes: 0, maxMult: 1, comboBreaks: 0, missed: 0,
+    };
+  }
+  WORLD.stats = newStats();
 
   function syncViewportSize() {
     const sw = Math.max(300, stageEl.clientWidth || 390);
@@ -1064,7 +1165,66 @@
     WORLD.spawnLog = [];
     WORLD.spawnCooldown = 1.0;
     WORLD.dustTimer = 0;
+    WORLD.pickups = [];
+    WORLD.combo = 0;
+    WORLD.mult = 1;
+    WORLD.magnetT = 0;
+    WORLD.shield = false;
+    WORLD.invulnT = 0;
+    WORLD.softFlash = 0;
+    WORLD.rain = null;
+    WORLD.nextRainAt = UNLOCK.rain;
+    WORLD.smoke = null;
+    WORLD.nextSmokeAt = UNLOCK.smoke;
+    WORLD.nextPickupAt = UNLOCK.magnet;
+    WORLD.lastGoldenAt = -99;
+    WORLD.toasts = [];
+    WORLD.banner = null;
+    WORLD.duckKey = false;
+    WORLD.duckTouch = false;
+    WORLD.duckMinUntil = 0;
+    WORLD.botDuck = false;
+    WORLD.corgi.wasDucking = false;
+    WORLD.stats = newStats();
     updateHUDPills(false);
+    updateStatusHUD(true);
+  }
+
+  // Combo / magnet / shield pills under the score (DOM only touched when something changes)
+  let statusKey = '';
+  let lastMultShown = 1;
+  function updateStatusHUD(force = false) {
+    const mult = WORLD.mult;
+    const mag = WORLD.magnetT > 0 ? Math.ceil(WORLD.magnetT) : 0;
+    const key = mult + '|' + mag + '|' + (WORLD.shield ? 1 : 0);
+    if (key === statusKey && !force) return;
+    statusKey = key;
+    hudComboEl.classList.toggle('hidden', mult < 2);
+    if (mult >= 2) {
+      hudComboEl.textContent = 'x' + mult;
+      if (mult > lastMultShown) {
+        hudComboEl.classList.remove('pop');
+        void hudComboEl.offsetWidth;
+        hudComboEl.classList.add('pop');
+      }
+    }
+    lastMultShown = mult;
+    hudMagnetEl.classList.toggle('hidden', mag <= 0);
+    hudMagnetEl.classList.toggle('low', mag > 0 && mag <= 1);
+    if (mag > 0) hudMagnetT.textContent = String(mag);
+    hudShieldEl.classList.toggle('hidden', !WORLD.shield);
+  }
+
+  // One-time pixel toasts, remembered in the save so each feature is explained only once
+  let lastInputKeyboard = false;
+  function featureSeen(key) {
+    if (!saveState.hints || typeof saveState.hints !== 'object') saveState.hints = {};
+    if (saveState.hints[key]) return;
+    saveState.hints[key] = true;
+    MH_STORAGE.save(saveState);
+    let lines = HINTS[key];
+    if (key === 'bird' && lastInputKeyboard) lines = ['ПТИЦА! ПРИГНИСЬ', 'СТРЕЛКА ВНИЗ / S'];
+    if (WORLD.toasts.length < 4) WORLD.toasts.push({ key, lines, t: 0, dur: 2.6 });
   }
 
   // ============================================================
@@ -1087,14 +1247,17 @@
     }
   }
 
-  function spawnFruitSparkles(x, y, kind) {
-    const palette = kind === 'pineapple'
+  function spawnFruitSparkles(x, y, kind, text = '+1') {
+    const palette = kind === 'golden'
+      ? ['#FFD100', '#FFF9F2', '#FFF1A0', '#FFB000']
+      : kind === 'pineapple'
       ? ['#FFD100', '#FFF9F2', '#3ED568']
       : kind === 'peach'
         ? ['#FF8066', '#FF4A8D', '#FFD100']
         : ['#FF9E1B', '#FFD100', '#FFF9F2'];
-    for (let i = 0; i < 14; i++) {
-      const ang = (Math.PI * 2 * i) / 14 + Math.random() * 0.3;
+    const nSp = kind === 'golden' ? 22 : 14;
+    for (let i = 0; i < nSp; i++) {
+      const ang = (Math.PI * 2 * i) / nSp + Math.random() * 0.3;
       const spd = 28 + Math.random() * 46;
       WORLD.particles.push({
         x,
@@ -1111,10 +1274,27 @@
     WORLD.popups.push({
       x,
       y: y - 4,
-      text: '+1',
+      text,
       life: 0.72,
       maxLife: 0.72,
     });
+  }
+
+  function addPopup(x, y, text, color = '#FFD100', life = 0.8) {
+    WORLD.popups.push({ x, y, text, color, life, maxLife: life });
+  }
+
+  function spawnRing(x, y, count, colors, speed, life) {
+    for (let i = 0; i < count; i++) {
+      const ang = (Math.PI * 2 * i) / count;
+      WORLD.particles.push({
+        x, y,
+        vx: Math.cos(ang) * speed * (i % 2 ? 1 : 0.7),
+        vy: Math.sin(ang) * speed * (i % 2 ? 1 : 0.7),
+        life, maxLife: life, size: i % 3 === 0 ? 2 : 1,
+        color: colors[i % colors.length], grav: 30,
+      });
+    }
   }
 
   // ============================================================
@@ -1128,6 +1308,22 @@
 
   function randRange(a, b) {
     return a + Math.random() * (b - a);
+  }
+
+  function randomFruitKind() {
+    return FRUIT_KINDS[Math.floor(Math.random() * FRUIT_KINDS.length)];
+  }
+  // rare golden fruit (+5): unlocked at UNLOCK.golden, never more often than once per 8 s
+  function rollGolden(chance = 0.07) {
+    if (WORLD.runTime < UNLOCK.golden || WORLD.runTime - WORLD.lastGoldenAt < 8) return false;
+    if (Math.random() >= chance) return false;
+    WORLD.lastGoldenAt = WORLD.runTime;
+    WORLD.stats.goldenSpawned += 1;
+    return true;
+  }
+  function makeFruit(kind, x, y, extra) {
+    const fs = MH_SPRITES.fruits[kind];
+    return Object.assign({ kind, x, baseY: y, w: fs.width, h: fs.height, phase: Math.random() * Math.PI * 2, collected: false }, extra || {});
   }
 
   function pickSmallKind() {
@@ -1146,6 +1342,15 @@
   // One pattern = a single obstacle, a "cluster" of two small ones (only when ONE jump can clear both) or a BIG hookah
   function buildPattern(v) {
     const rt = WORLD.runTime;
+    const lastK = lastKinds[lastKinds.length - 1];
+    const rs = Math.random();
+    // specials: the tin trampoline and the low bird are always solo patterns (never clustered with ground obstacles)
+    if (rt >= UNLOCK.tramp && WORLD.patternCount >= 3 && lastK !== 'tramp' && lastK !== 'hookahBig' && rs < 0.1) {
+      return [{ kind: 'tramp', off: 0 }];
+    }
+    if (rt >= UNLOCK.bird && WORLD.patternCount >= 3 && lastK !== 'bird' && rs >= 0.1 && rs < 0.24) {
+      return [{ kind: 'bird', off: 0 }];
+    }
     const r = Math.random();
     if (rt >= 12 && WORLD.patternCount >= 3 && r < 0.2) {
       return [{ kind: 'hookahBig', off: 0 }];
@@ -1181,7 +1386,112 @@
     const gap = req + extra * v;
     WORLD.pending = { items, bucket, gap, req };
     WORLD.spawnCooldown = (gap + tail.off + tail.def.bx1 - first.bx0) / v;
+    if (scheduleRainIfDue(tail, first, v)) return;
+    if (tail.def.pad) return;   // the stretch after a tin is under the bounce arc (its fruit is placed up high)
     placeGapFruit(tail, gap, v, bucket);
+  }
+
+  // Fruit rain: hold the next obstacle back so the stretch is obstacle-free, then let fruit pour from the sky
+  function scheduleRainIfDue(tail, first, v) {
+    if (WORLD.rain || WORLD.runTime < WORLD.nextRainAt) return false;
+    const front = WORLD.corgi.x + 25;
+    const startIn = Math.max(0.2, (W + 14 + tail.off + tail.def.bx0 - front) / v + obstLandTime(tail.def) - obstUpTime(tail.def) + 0.2);
+    const need = startIn + RAIN_DUR + 0.9 - (W + 14 + first.bx0 - front) / v;
+    WORLD.spawnCooldown = Math.max(WORLD.spawnCooldown, need);
+    WORLD.rain = { startIn, t: 0, dur: RAIN_DUR, active: false, spawnT: 0, goldenDone: false };
+    WORLD.nextRainAt = WORLD.runTime + startIn + randRange(30, 38);
+    if (WORLD.smoke) WORLD.smoke.t = Math.max(WORLD.smoke.t, WORLD.smoke.dur - 0.4);
+    return true;
+  }
+
+  function updateRain(dt) {
+    const rn = WORLD.rain;
+    if (!rn) return;
+    if (!rn.active) {
+      rn.startIn -= dt;
+      if (rn.startIn <= 0) {
+        rn.active = true;
+        WORLD.banner = { lines: ['ФРУКТОВЫЙ', 'ДОЖДЬ!'], t: 0, dur: 2.2 };
+        WORLD.stats.rains += 1;
+        MH_AUDIO.rain();
+        MH_TG.haptic('light');
+      }
+      return;
+    }
+    rn.t += dt;
+    rn.spawnT -= dt;
+    const front = WORLD.corgi.x + 25;
+    const v = WORLD.speed;
+    if (rn.t < rn.dur - 0.4 && rn.spawnT <= 0) {
+      rn.spawnT = 0.075 + Math.random() * 0.04;
+      const remain = rn.dur - rn.t;
+      const xMin = front + v * 0.5;
+      const xMax = Math.min(W + 6, front + v * (remain + 0.2));
+      if (xMax > xMin) {
+        let kind = randomFruitKind();
+        if (!rn.goldenDone && rn.t > 1.0 && WORLD.runTime >= UNLOCK.golden && Math.random() < 0.2) {
+          kind = 'golden';
+          rn.goldenDone = true;
+          WORLD.stats.goldenSpawned += 1;
+        }
+        const targetY = GROUND_Y - 22 - Math.random() * 50;
+        WORLD.fruits.push(makeFruit(kind, xMin + Math.random() * (xMax - xMin), -18 - Math.random() * 10, {
+          targetY, vy: 250 + Math.random() * 70, rain: true,
+        }));
+        WORLD.stats.rainFruit += 1;
+      }
+    }
+    if (rn.t >= rn.dur) WORLD.rain = null;
+  }
+
+  // Coal smoke: a short drifting dithered patch over the ground ahead; obstacles under it stay faintly visible
+  function buildSmokeCanvas() {
+    const w = Math.round(W * 0.55) + 24;
+    const h = 66;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const sctx = c.getContext('2d');
+    const blobs = [];
+    for (let i = 0; i < 7; i++) {
+      blobs.push({ x: 12 + (i * (w - 24)) / 6 + randRange(-5, 5), y: h - 16 - Math.random() * 28, r: 13 + Math.random() * 10 });
+    }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let d = 0;
+        for (const b of blobs) {
+          const k = 1 - Math.hypot((x - b.x) * 0.85, y - b.y) / b.r;
+          if (k > d) d = k;
+        }
+        if (y > h - 6) d = Math.max(d, 0.25);
+        if (d <= 0) continue;
+        const dens = Math.min(0.72, d * 1.4);
+        const thr = (BAYER_4[y & 3][x & 3] + 0.5) / 16;
+        if (dens <= thr) continue;
+        sctx.fillStyle = d > 0.55 ? '#E8D6D8' : d > 0.3 ? '#C9B6D3' : '#9F8AB8';
+        sctx.fillRect(x, y, 1, 1);
+      }
+    }
+    return c;
+  }
+  function startSmoke() {
+    WORLD.smoke = { t: 0, dur: 2.3, x0: Math.round(W * 0.4), canvas: buildSmokeCanvas() };
+    WORLD.stats.smokes += 1;
+    WORLD.nextSmokeAt = WORLD.runTime + randRange(22, 32);
+    featureSeen('smoke');
+  }
+
+  // Power-up pickups ride in obstacle-free gaps (one at a time, with a cooldown)
+  function pickPickupKind() {
+    const rt = WORLD.runTime;
+    if (rt < WORLD.nextPickupAt || WORLD.pickups.length) return null;
+    const opts = [];
+    if (rt >= UNLOCK.magnet && WORLD.magnetT <= 0) opts.push('magnet');
+    if (rt >= UNLOCK.shield && !WORLD.shield) opts.push('shield');
+    if (!opts.length || Math.random() >= 0.6) return null;
+    const fresh = opts.filter(k => !(saveState.hints && saveState.hints[k]));
+    const pool = fresh.length ? fresh : opts;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   // Fruit in an obstacle-free stretch: a single one, an arc or a row, at jump height
@@ -1195,6 +1505,14 @@
     const avail = gap - marginL - marginR;
     const nMax = Math.floor((avail - fs.width) / FRUIT_SPACING) + 1;
     if (nMax < 1) return;
+    const pk = pickPickupKind();
+    if (pk) {
+      const px = W + 14 + tail.off + tail.def.bx1 + marginL + Math.random() * Math.max(0, avail - 12);
+      WORLD.pickups.push({ kind: pk, x: px, baseY: GROUND_Y - 58 - Math.random() * 8, w: 12, h: 12, phase: Math.random() * 6 });
+      WORLD.nextPickupAt = WORLD.runTime + randRange(12, 18);
+      WORLD.stats.pickupsSpawned += 1;
+      return;
+    }
     let shape = 'single';
     let n = 1;
     const r = Math.random();
@@ -1210,6 +1528,7 @@
     const rowY = GROUND_Y - 50 - Math.random() * 14;
     const singleY = GROUND_Y - 48 - Math.random() * 20;
     const mid = (n - 1) / 2;
+    const goldIdx = rollGolden() ? Math.floor(mid) : -1;
     for (let i = 0; i < n; i++) {
       let y = singleY;
       if (shape === 'row') y = rowY;
@@ -1217,20 +1536,29 @@
         const k = 1 - Math.pow((i - mid) / mid, 2);
         y = GROUND_Y - 46 - 26 * k;
       }
-      WORLD.fruits.push({
-        kind: fk,
-        x: startX + i * FRUIT_SPACING,
-        baseY: y,
-        w: fs.width,
-        h: fs.height,
-        phase: Math.random() * Math.PI * 2,
-        collected: false,
-      });
+      WORLD.fruits.push(makeFruit(i === goldIdx ? 'golden' : fk, startX + i * FRUIT_SPACING, y));
     }
+  }
+
+  // Fruit arc along the tin's bounce trajectory (fruit positions are relative to the tin, which moves with the world)
+  function placeTrampFruit(padX) {
+    const v = WORLD.speed;
+    const V = trampV();
+    const T = trampAir();
+    const fk = randomFruitKind();
+    const ks = [0.24, 0.37, 0.5, 0.63, 0.76];
+    const goldK = rollGolden(0.35) ? 2 : -1;
+    ks.forEach((k, i) => {
+      const t = T * k;
+      const rise = V * t - 0.5 * GRAVITY * t * t;
+      const centerRel = 2 - 9.5 + v * t;
+      WORLD.fruits.push(makeFruit(i === goldK ? 'golden' : fk, padX + centerRel - 7, GROUND_Y - 15.5 - rise, { high: true }));
+    });
   }
 
   // The classic fruit hovering over an obstacle (a BIG hookah gets a high one that needs the double jump)
   function placeFruitAbove(items) {
+    if (items.some(it => OBST[it.kind].pad || OBST[it.kind].air)) return;
     const first = items[0];
     const last = items[items.length - 1];
     const dF = OBST[first.kind];
@@ -1245,22 +1573,16 @@
     const baseY = big
       ? GROUND_Y - 98 - Math.random() * 8
       : Math.max(GROUND_Y - 72, Math.min(GROUND_Y - 46, topClear));
-    WORLD.fruits.push({
-      kind: fk,
-      x: cx - fs.width / 2 + Math.round((Math.random() - 0.5) * 6),
-      baseY,
-      w: fs.width,
-      h: fs.height,
-      phase: Math.random() * Math.PI * 2,
-      collected: false,
-    });
+    WORLD.fruits.push(makeFruit(rollGolden() ? 'golden' : fk, cx - fs.width / 2 + Math.round((Math.random() - 0.5) * 6), baseY));
   }
 
   function spawnPattern(p) {
     for (const it of p.items) {
       const d = OBST[it.kind];
-      WORLD.obstacles.push({ kind: it.kind, x: W + 14 + it.off, y: GROUND_Y - d.h, w: d.w, h: d.h });
+      WORLD.obstacles.push({ kind: it.kind, x: W + 14 + it.off, y: GROUND_Y - d.h - (d.lift || 0), w: d.w, h: d.h, squash: 0 });
       lastKinds.push(it.kind);
+      if (d.pad) { WORLD.stats.tramps += 1; placeTrampFruit(W + 14 + it.off); }
+      if (d.air) WORLD.stats.birds += 1;
     }
     if (lastKinds.length > 6) lastKinds = lastKinds.slice(-6);
     const lastIt = p.items[p.items.length - 1];
@@ -1296,6 +1618,8 @@
     const c = WORLD.corgi;
     if (c.grounded) {
       c.jumpBuffer = 0.13;
+      WORLD.duckMinUntil = 0;   // a tap while sliding stands up and jumps
+      WORLD.duckTouch = false;
       return;
     }
     const heightAboveGround = CORGI_GROUND_TOP - c.y;
@@ -1353,19 +1677,106 @@
     MH_TG.haptic('medium');
   }
 
+  // ---- duck / slide & fast fall ----
+  function isDucking() {
+    const c = WORLD.corgi;
+    return c.grounded && (WORLD.duckKey || WORLD.duckTouch || WORLD.botDuck || WORLD.time < WORLD.duckMinUntil);
+  }
+  function startDuck(fromTouch) {
+    if (mode !== 'playing') return;
+    const c = WORLD.corgi;
+    if (fromTouch) {
+      WORLD.duckTouch = true;
+      WORLD.duckMinUntil = WORLD.time + 0.42;   // a quick swipe still gives a usable slide
+    }
+    c.jumpBuffer = 0;
+    if (!c.grounded && c.vy < FAST_FALL_V) {
+      c.vy = FAST_FALL_V;          // swipe down in the air = fast fall
+      c.flipT = -1;
+      WORLD.stats.fastFalls += 1;
+      WORLD.particles.push({ x: c.x + 14, y: c.y - 2, vx: 0, vy: -30, life: 0.18, maxLife: 0.18, size: 1, color: '#FFF9F2', grav: 0 });
+    }
+  }
+
+  // Touch: a tap jumps, a swipe down ducks. A press waits TAP_DELAY ms for a downward move before it
+  // counts as a tap, so swipes never trigger jumps; a late (slow) swipe while airborne becomes a fast fall.
+  const TAP_DELAY_MS = 45;
+  const SWIPE_PX = 14;
+  const touch = { id: null, x0: 0, y0: 0, t0: 0, pending: false, swiped: false, timer: 0 };
+  function firePendingTap() {
+    if (!touch.pending) return;
+    touch.pending = false;
+    clearTimeout(touch.timer);
+    requestJump();
+  }
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    if (mode === 'playing') requestJump();
+    if (mode !== 'playing') return;
+    lastInputKeyboard = false;
+    if (touch.id !== null && e.pointerId !== touch.id) {
+      // second finger: always an immediate tap (stand up + jump / double jump)
+      if (touch.pending) firePendingTap();
+      WORLD.duckTouch = false;
+      requestJump();
+      return;
+    }
+    touch.id = e.pointerId;
+    touch.x0 = e.clientX;
+    touch.y0 = e.clientY;
+    touch.t0 = performance.now();
+    touch.swiped = false;
+    touch.pending = true;
+    clearTimeout(touch.timer);
+    touch.timer = setTimeout(firePendingTap, TAP_DELAY_MS);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
   });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== touch.id || touch.swiped || mode !== 'playing') return;
+    const dy = e.clientY - touch.y0;
+    const dx = e.clientX - touch.x0;
+    if (dy >= SWIPE_PX && dy > Math.abs(dx) * 1.3 && performance.now() - touch.t0 < 500) {
+      touch.swiped = true;
+      if (touch.pending) {
+        touch.pending = false;
+        clearTimeout(touch.timer);
+      }
+      startDuck(true);
+      WORLD.stats.ducks += 1;
+    }
+  });
+  function endTouch(e) {
+    if (e.pointerId !== touch.id) return;
+    if (touch.pending) firePendingTap();
+    if (touch.swiped) WORLD.duckTouch = false;
+    touch.id = null;
+    touch.swiped = false;
+  }
+  canvas.addEventListener('pointerup', endTouch);
+  canvas.addEventListener('pointercancel', endTouch);
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
       if (mode === 'playing') {
         e.preventDefault();
-        requestJump();
+        lastInputKeyboard = true;
+        if (!e.repeat) requestJump();
+      }
+    } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      if (mode === 'playing') {
+        e.preventDefault();
+        lastInputKeyboard = true;
+        if (!e.repeat) {
+          WORLD.duckKey = true;
+          WORLD.stats.ducks += 1;
+          startDuck(false);
+        }
       }
     }
   });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') WORLD.duckKey = false;
+  });
+  window.addEventListener('blur', () => { WORLD.duckKey = false; WORLD.duckTouch = false; });
 
   // ============================================================
   // UI / SCREEN TRANSITIONS
@@ -1930,10 +2341,35 @@
       c.animTimer += dt * (12.5 + (WORLD.speed - 105) * 0.05);
       c.runFrame = Math.floor(c.animTimer) % 6;
       WORLD.dustTimer += dt;
-      if (WORLD.dustTimer >= 0.16) {
+      if (WORLD.dustTimer >= (c.wasDucking ? 0.07 : 0.16)) {
         WORLD.dustTimer = 0;
-        spawnDust(c.x + 5, GROUND_Y, 2, 1);
+        spawnDust(c.x + (c.wasDucking ? 18 : 5), GROUND_Y, 2, 1);
       }
+    }
+    const ducking = isDucking();
+    if (ducking && !c.wasDucking) {
+      MH_AUDIO.duck();
+      spawnDust(c.x + 20, GROUND_Y, 4, 1.4);
+    }
+    c.wasDucking = ducking;
+
+    // timers: power-ups, toasts, banner, events
+    if (WORLD.magnetT > 0) WORLD.magnetT = Math.max(0, WORLD.magnetT - dt);
+    if (WORLD.invulnT > 0) WORLD.invulnT = Math.max(0, WORLD.invulnT - dt);
+    if (WORLD.softFlash > 0) WORLD.softFlash = Math.max(0, WORLD.softFlash - dt);
+    if (WORLD.toasts.length) {
+      WORLD.toasts[0].t += dt;
+      if (WORLD.toasts[0].t >= WORLD.toasts[0].dur) WORLD.toasts.shift();
+    }
+    if (WORLD.banner) {
+      WORLD.banner.t += dt;
+      if (WORLD.banner.t >= WORLD.banner.dur) WORLD.banner = null;
+    }
+    updateRain(dt);
+    if (!WORLD.smoke && !WORLD.rain && WORLD.runTime >= WORLD.nextSmokeAt) startSmoke();
+    if (WORLD.smoke) {
+      WORLD.smoke.t += dt;
+      if (WORLD.smoke.t >= WORLD.smoke.dur) WORLD.smoke = null;
     }
 
     WORLD.spawnCooldown -= dt;
@@ -1941,12 +2377,13 @@
       spawnNextPattern();
     }
 
-    // one-time hint when the first BIG hookah rolls in
-    if (!hintShown && !saveState.doubleSeen && WORLD.obstacles.some(o => o.kind === 'hookahBig' && o.x < W - 12)) {
-      hintShown = true;
-      WORLD.hintT = 2.8;
+    // one-time hints the first time each thing appears on screen
+    if (!saveState.doubleSeen && WORLD.obstacles.some(o => o.kind === 'hookahBig' && o.x < W - 12)) featureSeen('double');
+    for (const o of WORLD.obstacles) {
+      if (o.x < W - 14 && (o.kind === 'tramp' || o.kind === 'bird')) featureSeen(o.kind);
     }
-    if (WORLD.hintT > 0) WORLD.hintT -= dt;
+    for (const pk of WORLD.pickups) if (pk.x < W - 14) featureSeen(pk.kind);
+    if (WORLD.fruits.some(f => f.kind === 'golden' && f.x < W - 14 && f.baseY > 0)) featureSeen('golden');
     for (let i = WORLD.puffs.length - 1; i >= 0; i--) {
       const pf = WORLD.puffs[i];
       pf.t += dt;
@@ -1955,10 +2392,11 @@
     }
 
     const cx1 = c.x + 6;
-    const cy1 = c.y + 4;
+    const cy1 = ducking ? GROUND_Y - DUCK_TOP : c.y + 4;
     const cx2 = c.x + 25;
     const cy2 = c.y + 17;
 
+    let hitDone = false;
     for (let i = WORLD.obstacles.length - 1; i >= 0; i--) {
       const o = WORLD.obstacles[i];
       o.x -= WORLD.speed * dt;
@@ -1967,38 +2405,194 @@
         continue;
       }
       const def = OBST[o.kind];
+      if (def.pad) {
+        if (o.squash > 0) o.squash -= dt;
+        if (cx2 > o.x + 2 && cx1 < o.x + o.w - 2 && cy2 >= o.y - 2 && (c.grounded || c.vy > 0)) bounceOn(o);
+        continue;
+      }
+      if (def.air && !o.passed && o.x + def.bx1 < cx1) {
+        o.passed = true;
+        WORLD.stats.birdsPassed += 1;
+      }
+      if (WORLD.invulnT > 0 || hitDone) continue;
       for (const r of def.rects) {
         const ox1 = o.x + r.x;
         const oy1 = o.y + r.y;
         const ox2 = ox1 + r.w;
         const oy2 = oy1 + r.h;
         if (cx1 < ox2 && cx2 > ox1 && cy1 < oy2 && cy2 > oy1) {
+          if (WORLD.shield) {
+            breakShield();
+            hitDone = true;
+            break;
+          }
           triggerCrash();
           return;
         }
       }
     }
 
+    // fruit: falling rain fruit, magnet pull, combo bookkeeping
+    const mcx = c.x + 15.5;
+    const mcy = (cy1 + cy2) / 2;
     for (let i = WORLD.fruits.length - 1; i >= 0; i--) {
       const f = WORLD.fruits[i];
       f.x -= WORLD.speed * dt;
-      const fy = f.baseY + Math.sin(WORLD.time * 5 + f.phase) * 2.5;
+      if (f.vy) {
+        f.baseY += f.vy * dt;
+        if (f.baseY >= f.targetY) { f.baseY = f.targetY; f.vy = 0; }
+      }
+      if (WORLD.magnetT > 0 && f.x < W) {
+        const dx = mcx - (f.x + f.w / 2);
+        const dy = mcy - (f.baseY + f.h / 2);
+        const d = Math.hypot(dx, dy);
+        if (f.mag || d < MAGNET_R) {
+          f.mag = true;
+          const stepD = Math.min(d, 300 * dt);
+          if (d > 0.01) {
+            f.x += (dx / d) * stepD + WORLD.speed * dt * 0.6;
+            f.baseY += (dy / d) * stepD;
+          }
+          f.vy = 0;
+        }
+      }
+      const fy = (f.mag || f.vy) ? f.baseY : f.baseY + Math.sin(WORLD.time * 5 + f.phase) * 2.5;
       if (f.x + f.w < -16 || f.collected) {
         WORLD.fruits.splice(i, 1);
         continue;
       }
       if (cx1 - 2 < f.x + f.w && cx2 + 2 > f.x && cy1 - 3 < fy + f.h && cy2 > fy) {
-        f.collected = true;
-        WORLD.score += 1;
-        updateHUDPills(true);
-        spawnFruitSparkles(f.x + f.w / 2, fy + f.h / 2, f.kind);
-        MH_AUDIO.fruit();
-        MH_TG.haptic('light');
+        collectFruit(f, fy);
         WORLD.fruits.splice(i, 1);
+        continue;
+      }
+      if (!f.rain && !f.mag && !f.missed && f.x + f.w < cx1 - 1) {
+        f.missed = true;
+        WORLD.stats.missed += 1;
+        if (WORLD.combo > 0) breakCombo();
+      }
+      if (f.kind === 'golden' && Math.random() < dt * 9) {
+        WORLD.particles.push({
+          x: f.x + Math.random() * f.w, y: fy + Math.random() * f.h, vx: -10, vy: -14,
+          life: 0.35, maxLife: 0.35, size: 1, color: Math.random() < 0.5 ? '#FFF9F2' : '#FFD100', grav: 0,
+        });
       }
     }
 
+    for (let i = WORLD.pickups.length - 1; i >= 0; i--) {
+      const pk = WORLD.pickups[i];
+      pk.x -= WORLD.speed * dt;
+      if (pk.x + pk.w < -16) {
+        WORLD.pickups.splice(i, 1);
+        continue;
+      }
+      const py = pk.baseY + Math.sin(WORLD.time * 4 + pk.phase) * 2;
+      if (cx1 - 2 < pk.x + pk.w && cx2 + 2 > pk.x && cy1 - 3 < py + pk.h && cy2 > py) {
+        applyPickup(pk, py);
+        WORLD.pickups.splice(i, 1);
+      }
+    }
+
+    updateStatusHUD();
     updateParticles(dt);
+  }
+
+  function collectFruit(f, fy) {
+    f.collected = true;
+    WORLD.combo += 1;
+    let m = 1;
+    for (let i = COMBO_STEPS.length - 1; i > 0; i--) {
+      if (WORLD.combo >= COMBO_STEPS[i]) { m = i + 1; break; }
+    }
+    const up = m > WORLD.mult;
+    WORLD.mult = m;
+    if (m > WORLD.stats.maxMult) WORLD.stats.maxMult = m;
+    const golden = f.kind === 'golden';
+    const pts = (golden ? 5 : 1) * m;
+    WORLD.score += pts;
+    updateHUDPills(true);
+    spawnFruitSparkles(f.x + f.w / 2, fy + f.h / 2, f.kind, '+' + pts);
+    if (golden) {
+      WORLD.stats.golden += 1;
+      MH_AUDIO.golden();
+      MH_TG.haptic('medium');
+    } else {
+      MH_AUDIO.fruit();
+      MH_TG.haptic('light');
+    }
+    if (up) {
+      addPopup(WORLD.corgi.x + 22, WORLD.corgi.y - 24, 'x' + m + '!', '#FF4A8D', 0.9);
+      MH_AUDIO.comboUp();
+      if (m === 2) featureSeen('combo');
+    }
+  }
+
+  function breakCombo() {
+    if (WORLD.combo >= COMBO_STEPS[1]) WORLD.stats.comboBreaks += 1;
+    WORLD.combo = 0;
+    WORLD.mult = 1;
+  }
+
+  function applyPickup(pk, py) {
+    const x = pk.x + pk.w / 2;
+    const y = py + pk.h / 2;
+    if (pk.kind === 'magnet') {
+      WORLD.magnetT = MAGNET_DUR;
+      WORLD.stats.magnets += 1;
+      addPopup(x, y - 8, 'МАГНИТ!', '#FF9E1B', 0.9);
+      spawnRing(x, y, 14, ['#FFD100', '#FF9E1B', '#E62E4D'], 46, 0.4);
+    } else {
+      WORLD.shield = true;
+      WORLD.stats.shields += 1;
+      addPopup(x, y - 8, 'ЩИТ!', '#8FF5EA', 0.9);
+      spawnRing(x, y, 14, ['#8FF5EA', '#FFF9F2', '#E62E4D'], 46, 0.4);
+    }
+    MH_AUDIO.pickup();
+    MH_TG.haptic('medium');
+    updateStatusHUD(true);
+  }
+
+  // Shield (Santa cap) eats one hit: bubble pops, short blink-invulnerability, no shake - only a soft flash
+  function breakShield() {
+    const c = WORLD.corgi;
+    WORLD.shield = false;
+    WORLD.invulnT = INVULN_T;
+    WORLD.softFlash = 0.18;
+    WORLD.stats.shieldBreaks += 1;
+    const x = c.x + 15;
+    const y = c.y + 9;
+    spawnRing(x, y, 20, ['#8FF5EA', '#FFF9F2', '#FFC2D4'], 70, 0.45);
+    addPopup(x, c.y - 10, 'ЩИТ!', '#FFF9F2', 0.8);
+    breakCombo();
+    MH_AUDIO.shieldBreak();
+    MH_TG.haptic('medium');
+    updateStatusHUD(true);
+  }
+
+  // MUSTHAVE tin trampoline: launches the corgi very high with a somersault
+  function bounceOn(o) {
+    const c = WORLD.corgi;
+    c.vy = -trampV();
+    c.y = Math.min(c.y, CORGI_GROUND_TOP);
+    c.grounded = false;
+    c.jumps = 2;
+    c.airTime = 0;
+    c.flipT = 0;
+    c.jumpBuffer = 0;
+    WORLD.duckMinUntil = 0;
+    WORLD.duckTouch = false;
+    o.squash = 0.22;
+    WORLD.stats.bounces += 1;
+    spawnDust(o.x + 12, GROUND_Y, 8, 1.8);
+    WORLD.puffs.push({ x: c.x + 14, y: c.y + 17, t: 0 });
+    for (let i = 0; i < 6; i++) {
+      WORLD.particles.push({
+        x: o.x + 3 + i * 4, y: o.y, vx: (i - 2.5) * 10, vy: -50 - Math.random() * 30,
+        life: 0.35, maxLife: 0.35, size: 1, color: i % 2 ? '#FFD100' : '#FF9E1B', grav: 120,
+      });
+    }
+    MH_AUDIO.bounce();
+    MH_TG.haptic('medium');
   }
 
   // Debug/demo autopilot (?autojump=1): jumps over obstacle groups, double-jumps the BIG hookah, grabs fruit when safe
@@ -2007,7 +2601,10 @@
     const v = WORLD.speed;
     const front = c.x + 25;
     const rear = c.x + 6;
+    // low bird: slide under it (from slightly before it reaches the nose until it has fully passed)
+    WORLD.botDuck = WORLD.obstacles.some(o => o.kind === 'bird' && o.x + OBST.bird.bx1 > rear - 2 && o.x + OBST.bird.bx0 - front < v * 0.12);
     const list = WORLD.obstacles
+      .filter(o => !OBST[o.kind].pad)
       .map(o => { const d = OBST[o.kind]; return { d, l: o.x + d.bx0, r: o.x + d.bx1 }; })
       .filter(e => e.r > rear)
       .sort((a, b) => a.l - b.l);
@@ -2021,6 +2618,7 @@
         else break;
       }
     }
+    if (target && target.d.air) return;   // ducking handles the bird; no fruit chasing right before it
     if (target) {
       const t = (target.l - front) / v;
       if (c.grounded) {
@@ -2038,7 +2636,7 @@
       // next obstacle: the visible one, or the one that is about to roll in (the bot may peek at the spawn timer)
       const tVisible = target ? (target.l - front) / v : 99;
       const tObs = Math.min(tVisible, WORLD.spawnCooldown + (W + 14 - front) / v);
-      const f = WORLD.fruits.find(fr => !fr.collected && fr.x > front - 8 && (fr.x - front) / v < 0.26 && fr.baseY > GROUND_Y - 80);
+      const f = WORLD.fruits.concat(WORLD.pickups).find(fr => !fr.collected && !fr.vy && fr.x > front - 8 && (fr.x - front) / v < 0.26 && fr.baseY > GROUND_Y - 80 && fr.baseY < GROUND_Y - 30);
       if (f && tObs > (target && target.d.big ? 1.6 : 1.25)) requestJump();
     }
   }
@@ -2775,6 +3373,94 @@
     ctx.fillRect(shX + 7, y - 8, 4, 1);
   }
 
+  // pixel ellipse outline points (cached per size) for the shield bubble / magnet aura / pickup bubbles
+  const ringCache = {};
+  function ringPoints(rx, ry) {
+    const key = rx + 'x' + ry;
+    if (ringCache[key]) return ringCache[key];
+    const pts = [];
+    const seen = new Set();
+    const n = Math.ceil(Math.PI * 2 * Math.max(rx, ry) * 2);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const x = Math.round(Math.cos(a) * rx);
+      const y = Math.round(Math.sin(a) * ry);
+      const k = x + ',' + y;
+      if (!seen.has(k)) { seen.add(k); pts.push([x, y]); }
+    }
+    ringCache[key] = pts;
+    return pts;
+  }
+  function drawPixelRing(cx, cy, rx, ry, colors, phase, every = 1) {
+    const pts = ringPoints(rx, ry);
+    const x0 = Math.round(cx);
+    const y0 = Math.round(cy);
+    const off = Math.floor(phase);
+    for (let i = 0; i < pts.length; i += every) {
+      ctx.fillStyle = colors[((((i + off) >> 2) % colors.length) + colors.length) % colors.length];
+      ctx.fillRect(x0 + pts[i][0], y0 + pts[i][1], 1, 1);
+    }
+  }
+
+  function drawObstacleSprite(o) {
+    const ox = Math.round(o.x);
+    const oy = Math.round(o.y);
+    if (o.kind === 'hookah') {
+      ctx.drawImage(MH_SPRITES.obstacles.hookah, ox, oy);
+    } else if (o.kind === 'hookahBig') {
+      ctx.drawImage(MH_SPRITES.obstacles.hookahBig, ox, oy);
+    } else if (o.kind === 'shilavilki') {
+      ctx.drawImage(MH_SPRITES.obstacles.shilavilki, ox, oy);
+    } else if (o.kind === 'coals') {
+      ctx.drawImage(MH_SPRITES.obstacles.coals[Math.floor(WORLD.time * 6) % 2], ox, oy);
+    } else if (o.kind === 'bird') {
+      ctx.drawImage(MH_SPRITES.obstacles.bird[Math.floor(WORLD.time * 7 + o.x * 0.01) % 2], ox, oy);
+    } else if (o.kind === 'tramp') {
+      if (o.squash > 0) ctx.drawImage(MH_SPRITES.obstacles.trampSquash, ox, oy + 3);
+      else ctx.drawImage(MH_SPRITES.obstacles.tramp, ox, oy);
+    }
+  }
+
+  function drawToastAndBanner() {
+    if (mode !== 'playing') return;
+    const ts = WORLD.toasts[0];
+    if (ts) {
+      const appear = Math.min(1, ts.t / 0.16);
+      const fadeOut = Math.max(0, Math.min(1, (ts.dur - ts.t) / 0.3));
+      const maxLen = Math.max(...ts.lines.map(l => l.length));
+      const bw = Math.min(W - 6, maxLen * 8 + 12);
+      const bh = ts.lines.length * 11 + 6;
+      const bx = Math.round(W / 2 - bw / 2);
+      const by = Math.round(H * 0.17) - Math.round((1 - appear) * 5);
+      ctx.save();
+      ctx.globalAlpha = fadeOut;
+      ctx.fillStyle = 'rgba(20, 12, 28, 0.86)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = '#FF4A8D';
+      ctx.fillRect(bx, by, bw, 1);
+      ctx.fillRect(bx, by + bh - 1, bw, 1);
+      ctx.fillRect(bx, by, 1, bh);
+      ctx.fillRect(bx + bw - 1, by, 1, bh);
+      ts.lines.forEach((ln, i) => {
+        drawPixelTextCached(ctx, ln, Math.round(W / 2), by + 4 + i * 11, 8, i === 0 ? '#FFD100' : '#FFF9F2', { align: 'center' });
+      });
+      ctx.restore();
+    }
+    const bn = WORLD.banner;
+    if (bn) {
+      const k = bn.t;
+      const fade = Math.max(0, Math.min(1, (bn.dur - k) / 0.35));
+      const pop = k < 0.12 ? -3 : 0;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      const y0 = Math.round(H * 0.27) + pop;
+      const wob = (i) => Math.round(Math.sin(k * 9 + i * 1.7) * 1);
+      drawPixelTextCached(ctx, bn.lines[0], Math.round(W / 2), y0 + wob(0), 16, '#FFD100', { align: 'center', outline: '#140C1C' });
+      drawPixelTextCached(ctx, bn.lines[1], Math.round(W / 2), y0 + 20 + wob(1), 16, '#FF4A8D', { align: 'center', outline: '#140C1C' });
+      ctx.restore();
+    }
+  }
+
   function renderMainCanvas() {
     ctx.save();
 
@@ -2793,35 +3479,90 @@
 
     // Draw Obstacles (1x, deep #140C1C silhouette pops cleanly!)
     for (const o of WORLD.obstacles) {
+      drawObstacleSprite(o);
       const ox = Math.round(o.x);
       const oy = Math.round(o.y);
-      if (o.kind === 'hookah') {
-        ctx.drawImage(MH_SPRITES.obstacles.hookah, ox, oy);
-      } else if (o.kind === 'hookahBig') {
-        ctx.drawImage(MH_SPRITES.obstacles.hookahBig, ox, oy);
-      } else if (o.kind === 'shilavilki') {
-        ctx.drawImage(MH_SPRITES.obstacles.shilavilki, ox, oy);
-      } else if (o.kind === 'coals') {
-        const frame = Math.floor(WORLD.time * 6) % 2;
-        ctx.drawImage(MH_SPRITES.obstacles.coals[frame], ox, oy);
+      if (o.kind === 'coals') {
         drawCoalSmoke(ox, oy + 2);
+      } else if (o.kind === 'tramp' && !(o.squash > 0)) {
+        // tiny bouncing chevrons: "jump on me"
+        const b = Math.floor(WORLD.time * 4) % 3;
+        ctx.fillStyle = '#FFD100';
+        const ay = oy - 5 - b;
+        ctx.fillRect(ox + 11, ay, 2, 1);
+        ctx.fillRect(ox + 10, ay + 1, 1, 1);
+        ctx.fillRect(ox + 13, ay + 1, 1, 1);
+      } else if (o.kind === 'bird') {
+        ctx.fillStyle = 'rgba(20, 12, 28, 0.22)';
+        ctx.fillRect(ox + 3, GROUND_Y + 2, 10, 1);
       }
     }
 
     // Draw Fruits with gentle bob + soft glow + orbiting glint
     for (const f of WORLD.fruits) {
       const fx = Math.round(f.x);
-      const fy = Math.round(f.baseY + Math.sin(WORLD.time * 5 + f.phase) * 2.5);
-      const haloA = 0.22 + 0.10 * Math.sin(WORLD.time * 4 + f.phase);
-      ctx.fillStyle = `rgba(255, 242, 180, ${haloA.toFixed(2)})`;
+      const fy = Math.round((f.mag || f.vy) ? f.baseY : f.baseY + Math.sin(WORLD.time * 5 + f.phase) * 2.5);
+      if (fy < -20) continue;
+      const golden = f.kind === 'golden';
+      const haloA = (golden ? 0.34 : 0.22) + 0.10 * Math.sin(WORLD.time * 4 + f.phase);
+      ctx.fillStyle = golden ? `rgba(255, 220, 90, ${haloA.toFixed(2)})` : `rgba(255, 242, 180, ${haloA.toFixed(2)})`;
       ctx.fillRect(fx + 1, fy - 1, f.w - 2, f.h + 2);
       ctx.fillRect(fx - 1, fy + 1, f.w + 2, f.h - 2);
+      if (golden) {
+        ctx.fillRect(fx + 3, fy - 3, f.w - 6, 2);
+        ctx.fillRect(fx + 3, fy + f.h + 1, f.w - 6, 2);
+      }
+      if (f.vy) {
+        ctx.fillStyle = 'rgba(255, 249, 242, 0.35)';
+        ctx.fillRect(fx + 6, fy - 6, 1, 4);
+      }
       ctx.drawImage(MH_SPRITES.fruits[f.kind], fx, fy);
-      // Orbiting 1px sparkle glint
+      // Orbiting 1px sparkle glint (golden: two, plus a 4-point star)
       const gx = fx + Math.round(f.w / 2 + Math.cos(WORLD.time * 4.5 + f.phase) * 7);
       const gy = fy + Math.round(f.h / 2 + Math.sin(WORLD.time * 4.5 + f.phase) * 5);
       ctx.fillStyle = '#FFF9F2';
       ctx.fillRect(gx, gy, 1, 1);
+      if (golden) {
+        ctx.fillRect(fx + f.w - gx + fx, fy + f.h - gy + fy, 1, 1);
+        if (Math.floor(WORLD.time * 3 + f.phase) % 2 === 0) {
+          const sx = fx + f.w - 1;
+          const sy = fy + 1;
+          ctx.fillRect(sx, sy - 2, 1, 5);
+          ctx.fillRect(sx - 2, sy, 5, 1);
+        }
+      }
+    }
+
+    // Power-up pickups: glowing coal (magnet) and Santa cap (shield) in a bubble
+    for (const pk of WORLD.pickups) {
+      const px = Math.round(pk.x);
+      const py = Math.round(pk.baseY + Math.sin(WORLD.time * 4 + pk.phase) * 2);
+      if (pk.kind === 'magnet') {
+        const ga = 0.22 + 0.12 * Math.sin(WORLD.time * 7);
+        ctx.fillStyle = `rgba(255, 158, 27, ${ga.toFixed(2)})`;
+        ctx.fillRect(px - 1, py, 14, 11);
+        ctx.fillRect(px + 1, py - 2, 10, 15);
+        ctx.drawImage(MH_SPRITES.pickups.coal, px, py + 1);
+        if (Math.floor(WORLD.time * 8 + pk.phase) % 3 === 0) {
+          ctx.fillStyle = '#FFD100';
+          ctx.fillRect(px + 5, py - 4, 1, 1);
+        }
+      } else {
+        drawPixelRing(px + 6, py + 5, 9, 8, ['#8FF5EA', '#FFF9F2'], WORLD.time * 10);
+        ctx.drawImage(MH_SPRITES.pickups.hat, px + 1, py + 2);
+      }
+    }
+
+    // Coal smoke event: dithered, drifting, fading; obstacles stay faintly visible on top
+    if (WORLD.smoke) {
+      const sm = WORLD.smoke;
+      const a = Math.max(0, Math.min(1, sm.t / 0.35, (sm.dur - sm.t) / 0.5));
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.drawImage(sm.canvas, Math.round(sm.x0 - sm.t * 16), GROUND_Y + 4 - sm.canvas.height);
+      ctx.globalAlpha = 0.42 * a;
+      for (const o of WORLD.obstacles) drawObstacleSprite(o);
+      ctx.restore();
     }
 
     // Ground shadow under corgi
@@ -2849,6 +3590,11 @@
       }
     } else {
       const cg = WORLD.corgi;
+      const blinkOn = WORLD.invulnT > 0 && Math.floor(WORLD.invulnT * 14) % 2 === 0;
+      if (blinkOn) {
+        ctx.save();
+        ctx.globalAlpha = 0.3;
+      }
       if (!cg.grounded && cg.flipT >= 0) {
         const step = Math.min(FLIP_STEPS - 1, Math.floor((cg.flipT / FLIP_DUR) * FLIP_STEPS));
         const fr = getFlipFrame(step, saveState.santaHat);
@@ -2857,9 +3603,27 @@
           Math.round(cg.x + MH_SPRITES.corgi.jump.width / 2 - fr.cx - 0) | 0,
           Math.round(cg.y + MH_SPRITES.corgi.jump.height / 2 - fr.cy) | 0
         );
+      } else if (cg.grounded && cg.wasDucking) {
+        drawCorgiPose(ctx, 'slide' + (Math.floor(WORLD.time * 10) % 2), cg.x, GROUND_Y - 10, PLAY_SCALE);
       } else {
         const pose = cg.grounded ? `run${cg.runFrame}` : 'jump';
         drawCorgiPose(ctx, pose, cg.x, cg.y, PLAY_SCALE);
+      }
+      if (blinkOn) ctx.restore();
+      const ccx = cg.x + 15;
+      const ccy = cg.grounded && cg.wasDucking ? GROUND_Y - 6 : cg.y + 9;
+      if (WORLD.shield) {
+        drawPixelRing(ccx, ccy, 18, 13, ['#8FF5EA', '#FFF9F2', '#8FF5EA', '#FFC2D4'], WORLD.time * 14);
+      }
+      if (WORLD.magnetT > 0) {
+        const blinkEnd = WORLD.magnetT < 1 && Math.floor(WORLD.time * 8) % 2 === 0;
+        if (!blinkEnd) {
+          for (let i = 0; i < 5; i++) {
+            const a = WORLD.time * 5 + (i * Math.PI * 2) / 5;
+            ctx.fillStyle = i % 2 ? '#FFD100' : '#FF9E1B';
+            ctx.fillRect(Math.round(ccx + Math.cos(a) * 21), Math.round(ccy + Math.sin(a) * 15), 1, 1);
+          }
+        }
       }
     }
 
@@ -2893,18 +3657,20 @@
 
     for (const pop of WORLD.popups) {
       const popScaleY = pop.life > pop.maxLife - 0.12 ? -2 : 0;
-      drawPixelText(ctx, pop.text, pop.x, pop.y + popScaleY, 8, '#FFD100', {
+      drawPixelTextCached(ctx, pop.text, Math.max(14, pop.x), pop.y + popScaleY, 8, pop.color || '#FFD100', {
         align: 'center',
         outline: '#140C1C',
       });
     }
 
-    if (WORLD.hintT > 0 && mode === 'playing' && Math.floor(WORLD.hintT * 4) % 4 !== 0) {
-      drawPixelText(ctx, 'ТАП-ТАП!', Math.round(W / 2), GROUND_Y - 150, 8, '#FFD100', { align: 'center', outline: '#140C1C' });
-      drawPixelText(ctx, 'ДВОЙНОЙ ПРЫЖОК', Math.round(W / 2), GROUND_Y - 138, 8, '#FFF9F2', { align: 'center', outline: '#140C1C' });
-    }
+    drawToastAndBanner();
 
     ctx.drawImage(vignetteCanvas, 0, 0);
+
+    if (WORLD.softFlash > 0) {
+      ctx.fillStyle = `rgba(200, 255, 250, ${(WORLD.softFlash * 1.4).toFixed(2)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     if (WORLD.crashFlash > 0) {
       const cf = Math.min(0.45, WORLD.crashFlash * 1.8);
@@ -2975,6 +3741,15 @@
       WORLD.corgi.jumps = 0;
       WORLD.corgi.airTime = 0;
       WORLD.corgi.flipT = -1;
+      WORLD.pickups = [];
+      WORLD.rain = null;
+      WORLD.smoke = null;
+      WORLD.banner = null;
+      WORLD.toasts = [];
+      WORLD.particles = [];
+      WORLD.popups = [];
+      WORLD.invulnT = 0;
+      WORLD.softFlash = 0;
     },
     setScore: (s) => {
       WORLD.score = s;
@@ -2986,8 +3761,41 @@
     },
     spawnObstacle: (kind, x = 112) => {
       const d = OBST[kind];
-      WORLD.obstacles.push({ kind, x, y: GROUND_Y - d.h, w: d.w, h: d.h });
+      WORLD.obstacles.push({ kind, x, y: GROUND_Y - d.h - (d.lift || 0), w: d.w, h: d.h, squash: 0 });
+      if (d.pad) placeTrampFruit(x);
     },
+    spawnPickup: (kind, x = 120, y = GROUND_Y - 60) => {
+      WORLD.pickups.push({ kind, x, baseY: y, w: 12, h: 12, phase: 0 });
+    },
+    startRain: () => {
+      WORLD.obstacles = [];
+      WORLD.pending = null;
+      WORLD.tail = null;
+      WORLD.spawnCooldown = RAIN_DUR + 1.2;
+      WORLD.rain = { startIn: 0.01, t: 0, dur: RAIN_DUR, active: false, spawnT: 0, goldenDone: false };
+      WORLD.nextRainAt = WORLD.runTime + 34;
+    },
+    startSmoke: () => startSmoke(),
+    setShield: (on) => { WORLD.shield = !!on; updateStatusHUD(true); },
+    setMagnet: (sec = MAGNET_DUR) => { WORLD.magnetT = sec; updateStatusHUD(true); },
+    setCombo: (n) => {
+      WORLD.combo = n;
+      let m = 1;
+      for (let i = COMBO_STEPS.length - 1; i > 0; i--) if (n >= COMBO_STEPS[i]) { m = i + 1; break; }
+      WORLD.mult = m;
+      updateStatusHUD(true);
+    },
+    duck: (on) => { WORLD.duckKey = !!on; if (on) startDuck(false); },
+    markHintsSeen: () => {
+      saveState.hints = {};
+      for (const k of Object.keys(HINTS)) saveState.hints[k] = true;
+      saveState.doubleSeen = true;
+      WORLD.toasts = [];
+    },
+    resetHints: () => { saveState.hints = {}; },
+    hints: () => Object.assign({}, saveState.hints || {}),
+    toasts: () => WORLD.toasts.map(t => t.key),
+    unlocks: () => Object.assign({}, UNLOCK),
     getWorld: () => ({
       speed: WORLD.speed,
       runTime: WORLD.runTime,
@@ -2997,12 +3805,23 @@
       fruits: WORLD.fruits.map(f => ({ kind: f.kind, x: f.x, baseY: f.baseY })),
       hitFreeze: WORLD.hitFreeze,
       doubles: doubleJumpCount,
+      combo: WORLD.combo,
+      mult: WORLD.mult,
+      magnetT: WORLD.magnetT,
+      shield: WORLD.shield,
+      invulnT: WORLD.invulnT,
+      ducking: isDucking(),
+      rain: WORLD.rain ? { active: WORLD.rain.active, t: WORLD.rain.t, startIn: WORLD.rain.startIn } : null,
+      smoke: WORLD.smoke ? { t: WORLD.smoke.t } : null,
+      pickups: WORLD.pickups.map(p => ({ kind: p.kind, x: p.x, baseY: p.baseY })),
+      stats: Object.assign({}, WORLD.stats),
+      toast: WORLD.toasts.length ? WORLD.toasts[0].key : null,
       spawnLog: WORLD.spawnLog.slice(),
       groundY: GROUND_Y,
     }),
     setAutoJump: (on) => { autoJump = !!on; },
     setFrozen: (on) => { debugFrozen = !!on; },
-    markDoubleSeen: () => { saveState.doubleSeen = true; WORLD.hintT = 0; },
+    markDoubleSeen: () => { saveState.doubleSeen = true; WORLD.hintT = 0; WORLD.toasts = WORLD.toasts.filter(t => t.key !== 'double'); },
     step: (frames = 1) => { for (let i = 0; i < frames; i++) update(1 / 60); },
     setRunTime: (t) => { WORLD.runTime = t; },
     // fast-forward the playing world without rendering (for gap/fairness statistics)

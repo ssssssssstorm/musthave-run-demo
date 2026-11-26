@@ -6,7 +6,7 @@
   <title>MUSTHAVE RUN</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect width=%2716%27 height=%2716%27 fill=%27%23FF4A8D%27/><rect x=%273%27 y=%273%27 width=%2710%27 height=%2710%27 fill=%27%23FFD100%27/></svg>" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=3" />
 </head>
 <body>
   <div id="app">
@@ -26,6 +26,17 @@
           <div class="hud-pill">
             <img id="hud-heart-icon" class="hud-icon" alt="" />
             <span id="hud-lives">5</span>
+          </div>
+        </div>
+        <!-- Power-up / combo status row (shown only while active) -->
+        <div id="hud-status" class="hud-status">
+          <div id="hud-combo" class="hud-mini hud-combo hidden">x2</div>
+          <div id="hud-magnet" class="hud-mini hidden">
+            <img id="hud-magnet-icon" class="hud-icon-sm" alt="" />
+            <span id="hud-magnet-t">5</span>
+          </div>
+          <div id="hud-shield" class="hud-mini hidden">
+            <img id="hud-shield-icon" class="hud-icon-sm" alt="" />
           </div>
         </div>
       </div>
@@ -169,10 +180,10 @@
     </div>
   </div>
 
-  <script src="js/sprites.js"></script>
-  <script src="js/audio.js"></script>
-  <script src="js/telegram.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/game.js"></script>
+  <script src="js/sprites.js?v=3"></script>
+  <script src="js/audio.js?v=3"></script>
+  <script src="js/telegram.js?v=3"></script>
+  <script src="js/storage.js?v=3"></script>
+  <script src="js/game.js?v=3"></script>
 </body>
 </html>

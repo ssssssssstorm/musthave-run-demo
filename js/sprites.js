@@ -1029,6 +1029,82 @@ function bakeMusicIcon(off) {
   return bakeSprite(rows.map(r => r.join('')));
 }
 
+
+// ---- Feature round 3: bird, slide pose, MUSTHAVE tin trampoline, pickups ----
+const CORGI_SLIDE_A = [
+  '.................KKKK.KKKK....',
+  '..KKK...........KOOOKKOOOOK...',
+  '.KOLOKKKKKKKKKKKKOOOOOWWOOOK..',
+  'KLOOOOOOOOOOOOOOOOOOWWWWKWOKKK',
+  'KOOOOOOOOOOOOOOOOOWWWWWKKKWWKK',
+  'KDOOWWWWWWWOOOOOWWWWWWWWWWWKK.',
+  '.KDWWWWWWWWWWWWWWWWWWKPPWWK...',
+  'KWWKKKKKKKKKKKKKKKKKKKKKKK....',
+  'KKK...............KWWKWWK.....',
+  '..................KKKKKKKK....',
+];
+const CORGI_SLIDE_B = [
+  '.................KKKK.KKKK....',
+  '..KKK...........KOOOKKOOOOK...',
+  '.KOLOKKKKKKKKKKKKOOOOOWWOOOK..',
+  'KLOOOOOOOOOOOOOOOOOOWWWWKWOKKK',
+  'KOOOOOOOOOOOOOOOOOWWWWWKKKWWKK',
+  'KDOOWWWWWWWOOOOOWWWWWWWWWWWKK.',
+  '.KDWWWWWWWWWWWWWWWWWWKPPWWK...',
+  '.KWWKKKKKKKKKKKKKKKKKKKKKK....',
+  '..KWWK.............KWWKWWK....',
+  '..KKKK.............KKKKKKKK...',
+];
+const OBSTACLE_BIRD_A = [
+  '....KK......KK..',
+  '....KWK....KSK..',
+  '.....KWK..KSK...',
+  '..KKK.KWKKSK....',
+  '.KWWWKKWWWWKKK..',
+  'KYYKWWWWWWWWWSKK',
+  '.KKWWWWWWWWWSKK.',
+  '...KKSSSSSKKK...',
+  '.....KKKKK......',
+];
+const OBSTACLE_BIRD_B = [
+  '................',
+  '................',
+  '..KKK...........',
+  '.KWWWK..........',
+  'KYYKWKKKKKKKKKK.',
+  '.KKWWWWWWWWWWSKK',
+  '...KWWSWWWWWSKK.',
+  '....KSSKKSSSKK..',
+  '.....KK..KSK....',
+];
+// MUSTHAVE tobacco tin used as a trampoline (silver lid, mango label "MH")
+const TRAMP_TIN = [
+  '..KKKKKKKKKKKKKKKKKKKK..',
+  '.KTTWTTTTTTTTTTTTTTTTIK.',
+  'KIIIIIIIIIIIIIIIIIIIIIIK',
+  'KKKKKKKKKKKKKKKKKKKKKKKK',
+  'KMMMMMMMMMMMMMMMMMMMMMMK',
+  'KMKMMMKMKMKMMAAAAAAAAMMK',
+  'KMKKMKKMKKKMMMMMMMMMMMDK',
+  'KMKMKMKMKMKMMAAAAAAAAMDK',
+  'KDDDDDDDDDDDDDDDDDDDDDDK',
+  '.KKKKKKKKKKKKKKKKKKKKKK.',
+];
+const PICKUP_COAL = [
+  '...KKKKK...',
+  '..KVRMRVK..',
+  '.KVRYYMRVK.',
+  'KVRYWWYMRVK',
+  'KVMYYWYYRVK',
+  'KVRMYYYMRVK',
+  '.KVRRMRRVK.',
+  '..KKVVVKK..',
+  '....KKK....',
+];
+const GOLD_COLORS = Object.assign({}, SPRITE_COLORS, {
+  'A': '#FFB000', 'M': '#FFD100', 'Y': '#FFF1A0', 'W': '#FFFFFF', 'G': '#FFE45C', 'E': '#C9A227',
+});
+
 window.MH_SPRITES = (function () {
   const backRight = bakeSprite(CORGI_BACK_RIGHT);
   const frontRight = bakeSprite(CORGI_FRONT_RIGHT);
@@ -1059,6 +1135,7 @@ window.MH_SPRITES = (function () {
       crouch: bakeSprite(CORGI_CROUCH),
       jump: bakeSprite(CORGI_JUMP),
       sleep: bakeSprite(CORGI_SLEEP),
+      slide: [bakeSprite(CORGI_SLIDE_A), bakeSprite(CORGI_SLIDE_B)],
     },
     bowl: bakeSprite(DOG_BOWL),
     santaHat: bakeSprite(SANTA_HAT),
@@ -1069,11 +1146,19 @@ window.MH_SPRITES = (function () {
       hookahBig: bakeSprite(OBSTACLE_HOOKAH_BIG, OBSTACLE_COLORS),
       shilavilki: bakeSprite(OBSTACLE_SHILAVILKI, OBSTACLE_COLORS),
       coals: [bakeSprite(OBSTACLE_COALS_A), bakeSprite(OBSTACLE_COALS_B)],
+      bird: [bakeSprite(OBSTACLE_BIRD_A), bakeSprite(OBSTACLE_BIRD_B)],
+      tramp: bakeSprite(TRAMP_TIN, OBSTACLE_COLORS),
+      trampSquash: bakeSprite([TRAMP_TIN[0], TRAMP_TIN[1]].concat(TRAMP_TIN.slice(5)), OBSTACLE_COLORS),
+    },
+    pickups: {
+      coal: bakeSprite(PICKUP_COAL),
+      hat: bakeSprite(SANTA_HAT),
     },
     fruits: {
       pineapple: bakeSprite(FRUIT_PINEAPPLE),
       peach: bakeSprite(FRUIT_PEACH),
       mango: bakeSprite(FRUIT_MANGO),
+      golden: bakeSprite(FRUIT_MANGO, GOLD_COLORS),
     },
     ui: {
       heartFull: bakeSprite(ICON_HEART_FULL),

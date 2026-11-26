@@ -16,7 +16,21 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
 - **Double jump**: a second tap / `Space` / `↑` in the air gives one extra jump per airtime, with an 8-step pixel somersault (nearest-neighbour rotated sprite) and a tiny puff. A one-time `ТАП-ТАП!` hint shows when the first big hookah arrives.
 - **Speed**: starts calm (70 px/s) and eases into the original curve (105 + 2.1·t, capped at 220).
 - **Music**: looping WebAudio chiptune (`js/audio.js`, "Mango Beach", 8 bars @ 118 BPM; pulse lead, triangle bass, off-beat stabs, soft drums) at low volume. Starts on the first tap, pauses when the app is hidden. Pixel note icon in the menu toggles it; the choice is saved in `localStorage` (`music`) separately from SFX (`ЗВУК`).
-- **Fruits (+1 point each)**: Pineapple, Peach, and Mango float above obstacles, and also appear in obstacle-free stretches as singles, arcs and rows at jump height (a high one above the big hookah rewards the double jump); jumping obstacles alone awards 0 points.
+- **Fruits (+1 point each, × combo)**: Pineapple, Peach, and Mango float above obstacles, and also appear in obstacle-free stretches as singles, arcs and rows at jump height (a high one above the big hookah rewards the double jump); jumping obstacles alone awards 0 points.
+- **Controls**: tap = jump, second tap in the air = double jump, **swipe down** (or `↓` / `S`) = duck / slide; swipe down in the air = fast fall. A press waits ~45 ms for a downward move before counting as a tap, so swipes never trigger jumps.
+- **Run evolves over time** (each new thing shows a tiny one-time pixel hint, remembered in `localStorage` → `hints`):
+
+  | Run time | Unlock |
+  |---|---|
+  | 0 s | **Combo**: fruits in a row build x2 (3) → x3 (6) → x4 (10) → x5 (15); HUD pill + `x3!` popup; resets on a missed fruit or a hit |
+  | 12 s | Big hookah (double jump) |
+  | 15 s | **MUSTHAVE tin trampoline**: run/land on it → very high bounce with a flip through a high fruit arc |
+  | 20 s | **Golden fruit**: rare, +5 (× combo), sparkles |
+  | 25 s | **Coal magnet** pickup: 5 s, nearby fruit flies to the corgi (HUD timer) |
+  | 30 s | **Low bird**: duck under it (or jump it); always a solo pattern with full fair spacing |
+  | 35 s | **Santa-cap shield** pickup: absorbs one hit (bubble, pop effect, ~1.3 s blink invulnerability) |
+  | 40 s, then every 30–38 s | **ФРУКТОВЫЙ ДОЖДЬ!** — ~4.6 s obstacle-free stretch full of falling fruit |
+  | 50 s, then every 22–32 s | **Coal smoke**: a dithered smoke patch drifts over the ground ahead for ~2.3 s; obstacles under it stay faintly visible |
 - **Daily Lives & Game Over**:
   - 5 hearts in HUD for regular players, persisted in `localStorage` with a 24-hour reset after the last daily life is spent.
   - VIP Telegram usernames (`@pnkmnmr`, `@musthave_pinkman`) get **100 lives/day**. Detected client-side from `Telegram.WebApp.initDataUnsafe.user.username` (case-insensitive, no `@`). The UI shows a compact pixel heart + `×N` counter instead of 100 hearts.
@@ -38,7 +52,7 @@ Open `http://localhost:8080` in Chrome/Firefox (enable mobile viewport `390×844
 - `?lives=0..N` — overrides remaining daily lives for testing (N is 5, or 100 for VIP).
 - `?tguser=<username>` — mocks a Telegram username (for VIP / lives testing).
 - `?sub=1` — skips the mock subscription gate.
-- `?autojump=1` — enables the demo autopilot (jumps, double-jumps the big hookah, grabs fruit when safe).
+- `?autojump=1` — enables the demo autopilot (jumps, double-jumps the big hookah, ducks birds, grabs fruit and pickups when safe).
 
 ## Deploy to a Static Host
 Upload the contents of `musthave-run/` as-is (no build command needed):

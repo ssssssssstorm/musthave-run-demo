@@ -357,6 +357,34 @@ window.MH_AUDIO = (function () {
       tone(440, 0.06, 'square', 0.045);
       tone(660, 0.09, 'square', 0.045, null, 0.07);
     },
+    bounce() {
+      tone(160, 0.22, 'square', 0.05, 720);
+      tone(320, 0.16, 'triangle', 0.05, 1100, 0.06);
+    },
+    pickup() {
+      tone(523, 0.06, 'square', 0.05);
+      tone(659, 0.06, 'square', 0.05, null, 0.06);
+      tone(988, 0.12, 'square', 0.05, null, 0.12);
+    },
+    golden() {
+      tone(784, 0.06, 'square', 0.055);
+      tone(1175, 0.06, 'square', 0.05, null, 0.05);
+      tone(1568, 0.14, 'triangle', 0.06, null, 0.1);
+    },
+    comboUp() {
+      tone(880, 0.05, 'square', 0.04, 1320);
+      tone(1320, 0.08, 'square', 0.035, 1760, 0.05);
+    },
+    shieldBreak() {
+      tone(1200, 0.12, 'triangle', 0.06, 300);
+      tone(600, 0.16, 'square', 0.035, 150, 0.04);
+    },
+    duck() {
+      tone(300, 0.07, 'triangle', 0.035, 160);
+    },
+    rain() {
+      [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.09, 'square', 0.045, null, i * 0.07));
+    },
     crash() {
       tone(220, 0.14, 'sawtooth', 0.06, 95);
       tone(130, 0.18, 'square', 0.05, 60, 0.09);

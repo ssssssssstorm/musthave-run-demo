@@ -92,7 +92,7 @@ html, body {
   image-rendering: -webkit-crisp-edges;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  touch-action: manipulation;
+  touch-action: none; /* swipes (duck) must reach the game, not the page */
 }
 
 /* Quick pill toggles on start screen */
@@ -754,6 +754,58 @@ html, body {
 .hud-icon {
   width: 16px;
   height: 16px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  display: block;
+}
+
+.hud-status {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.hud-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(20, 12, 28, 0.82);
+  border: 2px solid var(--ink);
+  box-shadow: 0 2px 0 rgba(20, 12, 28, 0.55);
+  font-family: 'PressStart2P', monospace;
+  font-size: 9px;
+  line-height: 1;
+  color: #FFF9F2;
+}
+
+.hud-mini.hidden {
+  display: none;
+}
+
+.hud-combo {
+  color: #FFD100;
+  background: #FF4A8D;
+  border-color: #140C1C;
+}
+
+.hud-mini.pop {
+  animation: mhScorePop 0.28s ease-out;
+}
+
+.hud-mini.low {
+  opacity: 0.6;
+}
+
+.hud-icon-sm {
+  width: 13px;
+  height: 12px;
   object-fit: contain;
   image-rendering: pixelated;
   display: block;
