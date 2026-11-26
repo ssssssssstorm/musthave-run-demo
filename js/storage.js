@@ -6,7 +6,7 @@ window.MH_STORAGE = (function () {
   const RESET_MS = 24 * 60 * 60 * 1000;
 
   // Telegram usernames (no '@'), compared case-insensitively to initDataUnsafe.user.username
-  const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman'];
+  const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh'];
 
   const MOCK_PLAYERS = [
     { id: 'u1', name: '@vibe_corgi', score: 38 },
