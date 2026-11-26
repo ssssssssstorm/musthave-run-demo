@@ -13,10 +13,11 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
   - Hookah fork-poker (*шило-вилка*)
   - Burning coals pile with flickering embers & animated wavy smoke (`≈`)
 - **Fruits (+1 point each)**: Pineapple, Peach, and Mango float above obstacles/arcs; jumping obstacles alone awards 0 points.
-- **5 Daily Lives & Game Over**:
-  - 5 hearts in HUD, persisted in `localStorage` with 24-hour reset after the 5th life is spent.
+- **Daily Lives & Game Over**:
+  - 5 hearts in HUD for regular players, persisted in `localStorage` with a 24-hour reset after the last daily life is spent.
+  - VIP Telegram usernames (`@pnkmnmr`, `@musthave_pinkman`) get **100 lives/day**. Detected client-side from `Telegram.WebApp.initDataUnsafe.user.username` (case-insensitive, no `@`). The UI shows a compact pixel heart + `×N` counter instead of 100 hearts.
   - Game Over diorama with sleeping corgi (`Z z z`) and an empty dog bowl right in front of its nose (*«Эх, ещё чуть-чуть...»*).
-  - After 5/5 lives are spent, `ИГРАТЬ СНОВА` is hidden and replaced by *«Вернитесь в игру через 24 часа»* + countdown.
+  - After the daily lives are spent, `ИГРАТЬ СНОВА` is hidden and replaced by *«Вернитесь в игру через 24 часа»* + countdown.
 - **Leaderboard (`РЕЙТИНГ`)**: Mock leaderboard with the current player highlighted and sorted by best score.
 
 ## Run Locally
@@ -30,7 +31,8 @@ Open `http://localhost:8080` in Chrome/Firefox (enable mobile viewport `390×844
 
 ### Debug Query Flags
 - `?reset=1` — clears `localStorage` (lives, high score, subscription gate).
-- `?lives=0..5` — overrides remaining daily lives for testing.
+- `?lives=0..N` — overrides remaining daily lives for testing (N is 5, or 100 for VIP).
+- `?tguser=<username>` — mocks a Telegram username (for VIP / lives testing).
 - `?sub=1` — skips the mock subscription gate.
 - `?autojump=1` — enables demo auto-jumper.
 

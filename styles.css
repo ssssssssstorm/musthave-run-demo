@@ -902,3 +902,17 @@ html, body {
 .screen-start .px-bars .b1 { animation: pxBarDance 1.05s steps(2) 0.0s infinite; }
 .screen-start .px-bars .b2 { animation: pxBarDance 1.05s steps(2) 0.25s infinite; }
 .screen-start .px-bars .b3 { animation: pxBarDance 1.05s steps(2) 0.5s infinite; }
+
+.hearts-counter {
+  gap: 4px;
+}
+.lives-x {
+  font-family: 'PressStart2P', monospace;
+  font-size: 9px;
+  line-height: 1;
+  color: inherit;
+  letter-spacing: 0;
+}
+.go-lives-row .lives-x {
+  color: var(--ink);
+}

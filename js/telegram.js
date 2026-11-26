@@ -87,8 +87,13 @@ window.MH_TG = (function () {
     } catch (_) {}
   }
 
+  function getWebApp() {
+    return (window.Telegram && window.Telegram.WebApp) || tg || null;
+  }
+
   function getUser() {
-    const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user : null;
+    const app = getWebApp();
+    const u = app && app.initDataUnsafe && app.initDataUnsafe.user ? app.initDataUnsafe.user : null;
     if (u) {
       return {
         id: String(u.id),

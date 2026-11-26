@@ -928,9 +928,14 @@
   window.addEventListener('mh-viewport', syncViewportSize);
   syncViewportSize();
 
+  function getDailyMaxLives() {
+    return (saveState && saveState.maxLives) || MH_STORAGE.getMaxLives();
+  }
+
   function updateHUDPills(popScore = false) {
     hudScoreEl.textContent = String(WORLD.score);
-    hudLivesEl.textContent = String(saveState.lives);
+    const maxL = getDailyMaxLives();
+    hudLivesEl.textContent = maxL > 5 ? ('×' + saveState.lives) : String(saveState.lives);
     if (popScore) {
       hudScorePill.classList.remove('score-pop');
       void hudScorePill.offsetWidth;
@@ -1112,6 +1117,10 @@
   }
 
   function renderPixelHeartsHTML(count, total) {
+    if (total > 5) {
+      const src = count > 0 ? HEART_FULL_URI : HEART_EMPTY_URI;
+      return `<span class="hearts-inline hearts-counter"><img class="px-heart-img" src="${src}" alt="" /><span class="lives-x">×${count}</span></span>`;
+    }
     let html = '<span class="hearts-inline">';
     for (let i = 0; i < total; i++) {
       html += `<img class="px-heart-img" src="${i < count ? HEART_FULL_URI : HEART_EMPTY_URI}" alt="" />`;
@@ -1122,7 +1131,8 @@
 
   function refreshStartUI() {
     saveState = MH_STORAGE.load();
-    startLivesBadge.innerHTML = `<span>ЖИЗНИ: ${saveState.lives}/${MH_STORAGE.MAX_LIVES}</span>${renderPixelHeartsHTML(saveState.lives, MH_STORAGE.MAX_LIVES)}`;
+    const maxL = getDailyMaxLives();
+    startLivesBadge.innerHTML = `<span>ЖИЗНИ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, maxL)}`;
 
     if (saveState.lives <= 0) {
       btnPlay.disabled = true;
@@ -1182,7 +1192,8 @@
   function populateGameOver() {
     goScoreEl.textContent = String(WORLD.score);
     goBestEl.textContent = String(saveState.bestScore);
-    goLivesRow.innerHTML = `<span>ОСТАЛОСЬ ЖИЗНЕЙ: ${saveState.lives}/${MH_STORAGE.MAX_LIVES}</span>${renderPixelHeartsHTML(saveState.lives, MH_STORAGE.MAX_LIVES)}`;
+    const maxL = getDailyMaxLives();
+    goLivesRow.innerHTML = `<span>ОСТАЛОСЬ ЖИЗНЕЙ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, maxL)}`;
 
     if (saveState.lives > 0) {
       goActionsAlive.classList.remove('hidden');
