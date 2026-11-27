@@ -510,6 +510,9 @@ if (require.main === module) {
     } catch (e) {
       console.error('[menu] skipped', e && e.message);
     }
+    if (process.env.PROXY_PROBE === '1') {
+      require('./proxy-e2e').runProxyE2E().catch((e) => console.error('[proxy-e2e] fail', e && e.message));
+    }
   }));
 }
 module.exports = { validateInitData, plausibility, server, migrate, pool, LIMITS };
