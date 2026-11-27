@@ -50,6 +50,21 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
 - **Client**: score is sent on game over (queued in `localStorage` and retried if offline / server asleep); the rating screen shows a pixel spinner, live top 50 with medal colours, highlights your row and pins it at the bottom when you're outside the top; offline → local best. Outside Telegram the board is read-only with a hint.
 - Local run: `cd server && npm i && DATABASE_URL=postgres://... TELEGRAM_BOT_TOKEN=... ALLOWED_ORIGINS='http://127.0.0.1:*' node index.js`, then open the game with `?api=http://127.0.0.1:10000`.
 
+## Compatibility & support
+- The game targets iOS 12+ Safari / WKWebView and Android WebView Chrome 61+ (ES2017). The Telegram SDK is loaded asynchronously with a 1.5 s timeout, so a hang on `telegram.org` no longer leaves a blank page.
+- If boot fails, a pixel fallback screen ("Что-то пошло не так") is shown with a short error code and a **Перезагрузить** button instead of a blank screen.
+- Client errors are POSTed to `https://musthave-run-api.onrender.com/api/clientlog` (user agent, Telegram version and platform, URL, error code / message; rate-limited, CORS `*`). To read them (requires `TELEGRAM_BOT_TOKEN`):
+
+```bash
+# from a trusted machine that has the token in the environment — do not print the token
+TS=$(date +%s)
+SIG=$(python3 -c "import hmac,hashlib,os,sys; print(hmac.new(os.environ['TELEGRAM_BOT_TOKEN'].encode(), ('admin:'+sys.argv[1]+':logs').encode(), hashlib.sha256).hexdigest())" "$TS")
+curl -sS -H "X-Admin-Ts: $TS" -H "X-Admin-Sig: $SIG" \
+  "https://musthave-run-api.onrender.com/api/clientlog?limit=50"
+```
+
+- **Mirror:** if `*.onrender.com` is slow or unreachable from a Russian ISP, a static copy of the game is at `https://ssssssssstorm.github.io/musthave-run-demo/` (same repo, GitHub Pages). The Telegram bot menu button still points at the Render URL until it is updated. The leaderboard API also lives on onrender.com, so the board may be offline on that mirror; the game itself still runs.
+
 ## Run Locally
 Serve the `/workspace/musthave-run` folder with any static HTTP server:
 

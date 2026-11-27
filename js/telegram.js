@@ -8,7 +8,9 @@ window.MH_TG = (function () {
   function resolveApiBase() {
     if (apiParam && /^https?:\/\//.test(apiParam)) return apiParam.replace(/\/+$/, '');
     try {
-      if (window.location.origin === 'https://musthave-run.onrender.com') return DEFAULT_API;
+      const origin = window.location.origin;
+      if (origin === 'https://musthave-run.onrender.com') return DEFAULT_API;
+      if (origin === 'https://ssssssssstorm.github.io') return DEFAULT_API;
     } catch (_) {}
     return null; // local / unknown origin: skip, so the console isn't filled with CORS errors
   }
@@ -20,11 +22,22 @@ window.MH_TG = (function () {
   };
   const PENDING_KEY = 'mh_pending_scores_v1';
 
+  function tgAtLeast(ver) {
+    try {
+      if (!tg || typeof tg.isVersionAtLeast !== 'function') return false;
+      return !!tg.isVersionAtLeast(ver);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function applySafeAreaVars() {
     const root = document.documentElement;
     if (!tg) return;
-    const sa = tg.safeAreaInset || { top: 0, bottom: 0, left: 0, right: 0 };
-    const ca = tg.contentSafeAreaInset || { top: 0, bottom: 0, left: 0, right: 0 };
+    let sa = { top: 0, bottom: 0, left: 0, right: 0 };
+    let ca = { top: 0, bottom: 0, left: 0, right: 0 };
+    try { if (tg.safeAreaInset) sa = tg.safeAreaInset; } catch (e) {}
+    try { if (tg.contentSafeAreaInset) ca = tg.contentSafeAreaInset; } catch (e) {}
     const topTotal = (sa.top || 0) + (ca.top || 0);
     const bottomTotal = (sa.bottom || 0) + (ca.bottom || 0);
     root.style.setProperty('--tg-safe-area-inset-top', `${sa.top || 0}px`);
@@ -40,9 +53,8 @@ window.MH_TG = (function () {
   function tryFullscreen() {
     if (!tg) return;
     try {
-      if (tg.expand) tg.expand();
-      const canFs = typeof tg.requestFullscreen === 'function'
-        && (!tg.isVersionAtLeast || tg.isVersionAtLeast('8.0'));
+      if (typeof tg.expand === 'function') tg.expand();
+      const canFs = typeof tg.requestFullscreen === 'function' && tgAtLeast('8.0');
       if (canFs && !tg.isFullscreen) {
         tg.requestFullscreen();
       }
@@ -58,8 +70,8 @@ window.MH_TG = (function () {
     if (!tg) return;
     try {
       const col = kind === 'sunset' ? '#2A154B' : '#120624';
-      if (tg.setHeaderColor) tg.setHeaderColor(col);
-      if (tg.setBackgroundColor) tg.setBackgroundColor(col);
+      if (typeof tg.setHeaderColor === 'function' && tgAtLeast('6.1')) tg.setHeaderColor(col);
+      if (typeof tg.setBackgroundColor === 'function' && tgAtLeast('6.1')) tg.setBackgroundColor(col);
     } catch (_) {}
   }
 
@@ -68,25 +80,32 @@ window.MH_TG = (function () {
     setTimeout(() => { flushPending().catch(() => {}); }, 1500);
     if (!tg) return;
     try {
-      tg.ready();
+      if (typeof tg.ready === 'function') tg.ready();
       tryFullscreen();
-      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+      if (typeof tg.disableVerticalSwipes === 'function' && tgAtLeast('7.7')) {
+        tg.disableVerticalSwipes();
+      }
       setChromeTheme('night');
       applySafeAreaVars();
 
-      if (tg.onEvent) {
-        tg.onEvent('viewportChanged', notifyViewport);
-        tg.onEvent('fullscreenChanged', notifyViewport);
-        tg.onEvent('safeAreaChanged', notifyViewport);
-        tg.onEvent('contentSafeAreaChanged', notifyViewport);
+      if (typeof tg.onEvent === 'function') {
+        const ev = function (name) {
+          try { tg.onEvent(name, notifyViewport); } catch (e) {}
+        };
+        ev('viewportChanged');
+        ev('fullscreenChanged');
+        ev('safeAreaChanged');
+        ev('contentSafeAreaChanged');
       }
 
       // Some mobile Telegram clients only allow fullscreen after a user gesture
-      const onFirstTap = () => {
+      const onFirstTap = function () {
         tryFullscreen();
         window.removeEventListener('pointerdown', onFirstTap, true);
+        window.removeEventListener('touchstart', onFirstTap, true);
       };
       window.addEventListener('pointerdown', onFirstTap, true);
+      window.addEventListener('touchstart', onFirstTap, true);
     } catch (_) {}
   }
 

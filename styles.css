@@ -19,6 +19,9 @@
   --tg-dark: #1A83BA;
   --tg-safe-top-total: 0px;
   --tg-safe-bottom-total: 0px;
+  /* fallback first: CSS max()/env() are missing on older WebViews (Chrome < 79) */
+  --safe-top: 0px;
+  --safe-bottom: 0px;
   --safe-top: max(env(safe-area-inset-top, 0px), var(--tg-safe-top-total));
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-bottom-total));
 }
@@ -77,6 +80,7 @@ html, body {
 @media (max-width: 600px), (hover: none) and (pointer: coarse) {
   #phone-stage {
     width: 100vw;
+    height: 100vh;   /* old WebViews do not understand dvh — without this the stage can collapse to 0 */
     height: 100dvh;
     max-width: none;
     max-height: none;
@@ -1063,4 +1067,46 @@ html, body {
 }
 .go-lives-row .lives-x {
   color: var(--ink);
+}
+
+
+/* Boot-failure fallback (must stay ES2017-era CSS: no inset/gap/dvh) */
+#mh-crash {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 99999;
+  background: #140C1C;
+  color: #FFF9F2;
+  font-family: 'PressStart2P', monospace;
+  text-align: center;
+  padding: 48px 18px 24px;
+  box-sizing: border-box;
+}
+#mh-crash.is-on { display: block; }
+#mh-crash h1 {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #FFD100;
+  margin: 0 0 18px;
+  font-weight: normal;
+}
+#mh-crash .mh-crash-code {
+  font-size: 8px;
+  color: #FF85B3;
+  margin: 0 0 28px;
+  word-break: break-all;
+}
+#mh-crash button {
+  font-family: inherit;
+  font-size: 10px;
+  color: #140C1C;
+  background: #FF4A8D;
+  border: 3px solid #FFF9F2;
+  box-shadow: 0 3px 0 #140C1C;
+  padding: 12px 18px;
+  cursor: pointer;
 }

@@ -32,6 +32,6 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ALLOWED_ORIGINS
-        value: https://musthave-run.onrender.com
+        value: https://musthave-run.onrender.com,https://ssssssssstorm.github.io
       - key: NODE_VERSION
         value: "22"

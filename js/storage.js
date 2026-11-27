@@ -8,6 +8,27 @@ window.MH_STORAGE = (function () {
   // Telegram usernames (no '@'), compared case-insensitively to initDataUnsafe.user.username
   const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh'];
 
+  // localStorage throws in some private modes, Desktop iframes and blocked-storage WebViews
+  const memoryStore = {};
+  let store = null;
+  function getStore() {
+    if (store) return store;
+    try {
+      const k = STORAGE_KEY + '_probe';
+      window.localStorage.setItem(k, '1');
+      window.localStorage.removeItem(k);
+      store = window.localStorage;
+    } catch (e) {
+      store = {
+        getItem: function (key) { return Object.prototype.hasOwnProperty.call(memoryStore, key) ? memoryStore[key] : null; },
+        setItem: function (key, val) { memoryStore[key] = String(val); },
+        removeItem: function (key) { delete memoryStore[key]; },
+      };
+    }
+    return store;
+  }
+
+
   const MOCK_PLAYERS = [
     { id: 'u1', name: '@vibe_corgi', score: 38 },
     { id: 'u2', name: 'Алина_MH', score: 31 },
@@ -81,14 +102,14 @@ window.MH_STORAGE = (function () {
   function load() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('reset') === '1') {
-      localStorage.removeItem(STORAGE_KEY);
+      try { getStore().removeItem(STORAGE_KEY); } catch (e) {}
     }
 
     const username = resolveUsername();
     const maxLives = getMaxLives(username);
     let state = defaultState(maxLives);
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = getStore().getItem(STORAGE_KEY);
       if (raw) {
         state = Object.assign(defaultState(DEFAULT_MAX_LIVES), JSON.parse(raw));
       }
@@ -124,7 +145,7 @@ window.MH_STORAGE = (function () {
 
   function save(state) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      getStore().setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (_) {}
   }
 
@@ -143,7 +164,7 @@ window.MH_STORAGE = (function () {
   }
 
   function getLeaderboard(state, user) {
-    const list = MOCK_PLAYERS.map(p => ({ ...p, isMe: false }));
+    const list = MOCK_PLAYERS.map(function (p) { return Object.assign({}, p, { isMe: false }); });
     list.push({
       id: user.id,
       name: user.name,

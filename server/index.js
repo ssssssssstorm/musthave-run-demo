@@ -9,7 +9,7 @@ const { Pool } = require('pg');
 
 const PORT = +process.env.PORT || 10000;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://musthave-run.onrender.com')
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://musthave-run.onrender.com,https://ssssssssstorm.github.io')
   .split(',').map(s => s.trim()).filter(Boolean);
 const SEASON_ID = +process.env.SEASON_ID || 1;
 const AUTH_MAX_AGE_S = 24 * 3600;
@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS best_scores (
   PRIMARY KEY (season_id, tg_id)
 );
 CREATE INDEX IF NOT EXISTS best_rank ON best_scores (season_id, best_score DESC, achieved_at ASC);
+CREATE TABLE IF NOT EXISTS client_logs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ip_hash TEXT,
+  ua TEXT,
+  tg_version TEXT,
+  tg_platform TEXT,
+  href TEXT,
+  code TEXT,
+  message TEXT,
+  stack TEXT
+);
+CREATE INDEX IF NOT EXISTS client_logs_created ON client_logs (created_at DESC);
 `;
 
 // ---------------- Telegram initData ----------------
@@ -363,14 +376,66 @@ async function handleLeaderboard(req, res, url) {
   return send(req, res, 200, { ok: true, season: SEASON_ID, total: total.rows[0].n, top: rows, me, authError: authError || undefined });
 }
 
-// Admin delete (for removing test rows). Signed with the bot token: sig = HMAC_SHA256(token, "admin:" + ts + ":" + id)
-async function handleAdminDelete(req, res, id) {
-  if (!BOT_TOKEN) return send(req, res, 403, { ok: false });
+function checkAdmin(req, action) {
+  if (!BOT_TOKEN) return false;
   const ts = +req.headers['x-admin-ts'];
   const sig = String(req.headers['x-admin-sig'] || '');
-  if (!ts || Math.abs(Date.now() / 1000 - ts) > 300 || !/^[0-9a-f]{64}$/.test(sig)) return send(req, res, 403, { ok: false });
-  const calc = crypto.createHmac('sha256', BOT_TOKEN).update('admin:' + ts + ':' + id).digest();
-  if (!crypto.timingSafeEqual(calc, Buffer.from(sig, 'hex'))) return send(req, res, 403, { ok: false });
+  if (!ts || Math.abs(Date.now() / 1000 - ts) > 300 || !/^[0-9a-f]{64}$/.test(sig)) return false;
+  const calc = crypto.createHmac('sha256', BOT_TOKEN).update('admin:' + ts + ':' + action).digest();
+  try { return crypto.timingSafeEqual(calc, Buffer.from(sig, 'hex')); } catch (e) { return false; }
+}
+
+function sendOpenCors(req, res, status, body) {
+  const data = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data, X-Admin-Ts, X-Admin-Sig',
+  });
+  res.end(data);
+}
+
+async function handleClientLog(req, res) {
+  const ip = clientIp(req);
+  if (!rateLimit('ip-clog:' + ip, 8, 8 / 60)) return sendOpenCors(req, res, 429, { ok: false, error: 'rate_limited' });
+  let body;
+  try { body = await readJson(req, 8 * 1024); } catch (e) { return sendOpenCors(req, res, 400, { ok: false }); }
+  const clip = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const row = {
+    ua: clip(body.ua, 400),
+    tg_version: clip(body.tgVersion, 32),
+    tg_platform: clip(body.tgPlatform, 32),
+    href: clip(body.href, 300),
+    code: clip(body.code, 32) || 'JS',
+    message: clip(body.message, 1500),
+    stack: clip(body.stack, 2000),
+  };
+  await pool.query(
+    `INSERT INTO client_logs (ip_hash, ua, tg_version, tg_platform, href, code, message, stack)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [ipHash(ip), row.ua, row.tg_version, row.tg_platform, row.href, row.code, row.message, row.stack]
+  );
+  console.log('[clientlog]', row.code, row.tg_platform, row.message.slice(0, 80));
+  return sendOpenCors(req, res, 200, { ok: true });
+}
+
+async function handleClientLogList(req, res, url) {
+  if (!checkAdmin(req, 'logs')) return send(req, res, 403, { ok: false });
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
+  const r = await pool.query(
+    `SELECT id, created_at, code, message, ua, tg_version, tg_platform, href, ip_hash
+     FROM client_logs ORDER BY id DESC LIMIT $1`,
+    [limit]
+  );
+  return send(req, res, 200, { ok: true, logs: r.rows });
+}
+
+// Admin delete (for removing test rows). Signed with the bot token: sig = HMAC_SHA256(token, "admin:" + ts + ":" + id)
+async function handleAdminDelete(req, res, id) {
+  if (!checkAdmin(req, id)) return send(req, res, 403, { ok: false });
   const r1 = await pool.query('DELETE FROM runs WHERE tg_id = $1', [id]);
   const r2 = await pool.query('DELETE FROM best_scores WHERE tg_id = $1', [id]);
   const r3 = await pool.query('DELETE FROM players WHERE tg_id = $1', [id]);
@@ -382,7 +447,16 @@ const server = http.createServer(async (req, res) => {
   try { url = new URL(req.url, 'http://x'); } catch (_) { return send(req, res, 400, { ok: false }); }
   try {
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, corsHeaders(req));
+      if (url.pathname === '/api/clientlog') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data, X-Admin-Ts, X-Admin-Sig',
+          'Access-Control-Max-Age': '600',
+        });
+      } else {
+        res.writeHead(204, corsHeaders(req));
+      }
       return res.end();
     }
     if (url.pathname === '/api/health' || url.pathname === '/') {
@@ -392,6 +466,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/score' && req.method === 'POST') return await handleScore(req, res);
     if (url.pathname === '/api/leaderboard' && req.method === 'GET') return await handleLeaderboard(req, res, url);
+    if (url.pathname === '/api/clientlog' && req.method === 'POST') return await handleClientLog(req, res);
+    if (url.pathname === '/api/clientlog' && req.method === 'GET') return await handleClientLogList(req, res, url);
     const m = url.pathname.match(/^\/api\/admin\/player\/(\d{1,20})$/);
     if (m && req.method === 'DELETE') return await handleAdminDelete(req, res, m[1]);
     return send(req, res, 404, { ok: false, error: 'not_found' });

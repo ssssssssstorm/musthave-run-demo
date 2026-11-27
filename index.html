@@ -4,11 +4,120 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>MUSTHAVE RUN</title>
+  <script>
+  /* ES5 only: runs before anything else. Sets a <base> on GitHub Pages and catches boot errors. */
+  (function () {
+    try {
+      if (location.hostname.indexOf('github.io') !== -1 && location.pathname.indexOf('/musthave-run-demo') === 0) {
+        var b = document.createElement('base');
+        b.href = '/musthave-run-demo/';
+        document.head.appendChild(b);
+      }
+    } catch (e1) {}
+
+    var logged = false;
+    function tgMeta() {
+      var out = { v: '', plat: '' };
+      try {
+        var w = window.Telegram && window.Telegram.WebApp;
+        if (w) {
+          out.v = String(w.version || '');
+          out.plat = String(w.platform || '');
+        }
+      } catch (e2) {}
+      return out;
+    }
+    function codeFrom(msg, src) {
+      msg = String(msg || '');
+      src = String(src || '');
+      if (/localStorage|QuotaExceeded|SecurityError/i.test(msg)) return 'STORAGE';
+      if (/AudioContext|webkitAudio/i.test(msg)) return 'AUDIO';
+      if (/telegram-web-app/i.test(src)) return 'TGSDK';
+      if (/sprites\.js/i.test(src)) return 'SPRITES';
+      if (/audio\.js/i.test(src)) return 'AUDIO';
+      if (/telegram\.js/i.test(src)) return 'TELEGRAM';
+      if (/storage\.js/i.test(src)) return 'STORAGE';
+      if (/game\.js/i.test(src)) return 'GAME';
+      if (/Script error/i.test(msg)) return 'SCRIPT';
+      return 'JS';
+    }
+    window.MH_LOG = function (code, detail) {
+      try {
+        if (logged) return;
+        logged = true;
+        var meta = tgMeta();
+        var body = JSON.stringify({
+          code: String(code || 'JS').slice(0, 32),
+          message: String(detail || '').slice(0, 1500),
+          ua: navigator.userAgent || '',
+          href: String(location.href || '').slice(0, 300),
+          tgVersion: meta.v,
+          tgPlatform: meta.plat
+        });
+        var url = 'https://musthave-run-api.onrender.com/api/clientlog';
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob([body], { type: 'text/plain' }));
+        } else {
+          var x = new XMLHttpRequest();
+          x.open('POST', url, true);
+          x.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
+          x.send(body);
+        }
+      } catch (e3) {}
+    };
+    window.__MH_CRASH = function (code, detail) {
+      if (window.__MH_BOOTED) {
+        try { window.MH_LOG(code, detail); } catch (e4) {}
+        return;
+      }
+      var el = document.getElementById('mh-crash');
+      if (!el) return;
+      el.className = 'is-on';
+      el.style.display = 'block';
+      var c = document.getElementById('mh-crash-code');
+      if (c) c.textContent = String(code || 'JS').slice(0, 24);
+      try { window.MH_LOG(code, detail); } catch (e5) {}
+    };
+    window.onerror = function (msg, src, line, col, err) {
+      var code = codeFrom(msg, src);
+      var detail = (err && err.stack) ? err.stack : (String(msg || '') + ' @' + String(src || '') + ':' + (line || 0));
+      window.__MH_CRASH(code, detail);
+    };
+    if (window.addEventListener) {
+      window.addEventListener('unhandledrejection', function (ev) {
+        var r = ev && ev.reason;
+        var msg = r ? (r.message || String(r)) : 'rejection';
+        if (/no_api|Failed to fetch|Load failed|AbortError|NetworkError|NETWORK_ERR|The operation was aborted/i.test(String(msg))) return;
+        if (window.__MH_BOOTED) {
+          try { window.MH_LOG('PROMISE', (r && r.stack) || msg); } catch (e6) {}
+          return;
+        }
+        window.__MH_CRASH('PROMISE', (r && r.stack) || msg);
+      });
+    }
+  })();
+  </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect width=%2716%27 height=%2716%27 fill=%27%23FF4A8D%27/><rect x=%273%27 y=%273%27 width=%2710%27 height=%2710%27 fill=%27%23FFD100%27/></svg>" />
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
+  <noscript>
+    <div id="mh-crash" class="is-on" style="display:block">
+      <h1>Что-то пошло не так</h1>
+      <p class="mh-crash-code">NOJS</p>
+    </div>
+  </noscript>
+  <div id="mh-crash">
+    <h1>Что-то пошло не так</h1>
+    <p id="mh-crash-code" class="mh-crash-code">JS</p>
+    <button type="button" id="mh-crash-reload">Перезагрузить</button>
+  </div>
+  <script>
+  (function () {
+    var btn = document.getElementById('mh-crash-reload');
+    if (btn) btn.onclick = function () { try { location.reload(); } catch (e) {} };
+  })();
+  </script>
   <div id="app">
     <div id="phone-stage">
       <canvas id="game-canvas" width="195" height="422"></canvas>
@@ -180,10 +289,43 @@
     </div>
   </div>
 
-  <script src="js/sprites.js?v=5"></script>
-  <script src="js/audio.js?v=5"></script>
-  <script src="js/telegram.js?v=5"></script>
-  <script src="js/storage.js?v=5"></script>
-  <script src="js/game.js?v=5"></script>
+  <script>
+  /* Do not load telegram-web-app.js synchronously: if telegram.org hangs, the page stays blank.
+     Give it 1.5s, then start the game either way. */
+  (function () {
+    var VERSION = '6';
+    var files = [
+      'js/sprites.js?v=' + VERSION,
+      'js/audio.js?v=' + VERSION,
+      'js/telegram.js?v=' + VERSION,
+      'js/storage.js?v=' + VERSION,
+      'js/game.js?v=' + VERSION
+    ];
+    var started = false;
+    function loadGame() {
+      if (started) return;
+      started = true;
+      var i = 0;
+      function next() {
+        if (i >= files.length) return;
+        var el = document.createElement('script');
+        el.src = files[i++];
+        el.onload = next;
+        el.onerror = function () {
+          if (window.__MH_CRASH) window.__MH_CRASH('LOAD', el.src);
+        };
+        document.body.appendChild(el);
+      }
+      next();
+    }
+    var ts = document.createElement('script');
+    ts.src = 'https://telegram.org/js/telegram-web-app.js';
+    ts.async = true;
+    ts.onload = loadGame;
+    ts.onerror = loadGame;
+    document.head.appendChild(ts);
+    setTimeout(loadGame, 1500);
+  })();
+  </script>
 </body>
 </html>

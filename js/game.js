@@ -1,11 +1,23 @@
 (function () {
+  if (!window.MH_SPRITES || !window.MH_STORAGE || !window.MH_AUDIO || !window.MH_TG) {
+    if (window.__MH_CRASH) window.__MH_CRASH('DEPS', 'missing library');
+    return;
+  }
   const stageEl = document.getElementById('phone-stage');
   const canvas = document.getElementById('game-canvas');
+  if (!stageEl || !canvas || !canvas.getContext) {
+    if (window.__MH_CRASH) window.__MH_CRASH('CANVAS', 'stage missing');
+    return;
+  }
   const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  if (!ctx) {
+    if (window.__MH_CRASH) window.__MH_CRASH('CANVAS', 'no 2d context');
+    return;
+  }
+  try { ctx.imageSmoothingEnabled = false; } catch (e) {}
 
   const goCanvas = document.getElementById('gameover-canvas');
-  const goCtx = goCanvas.getContext('2d');
+  const goCtx = goCanvas && goCanvas.getContext ? goCanvas.getContext('2d') : null;
   goCtx.imageSmoothingEnabled = false;
 
   // Dynamic integer-scaled logical canvas size (edge-to-edge on any phone, zero letterboxing!)
@@ -190,7 +202,13 @@
 
   MH_TG.init();
   const user = MH_TG.getUser();
-  let saveState = MH_STORAGE.load();
+  let saveState;
+  try {
+    saveState = MH_STORAGE.load();
+  } catch (e) {
+    saveState = { lives: 5, maxLives: 5, bestScore: 0, gamesPlayed: 0, subscribed: false, music: true, santaHat: false, hints: {} };
+    if (window.__MH_CRASH) { /* keep going; storage already has a memory fallback */ }
+  }
   MH_AUDIO.setEnabled(saveState.sound);
   MH_AUDIO.setMusicEnabled(saveState.music !== false);
 
@@ -1737,18 +1755,22 @@
     clearTimeout(touch.timer);
     requestJump();
   }
-  canvas.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
+  function pointerIdOf(e) {
+    return (e.pointerId || e.identifier || 1);
+  }
+  function onPtrDown(e) {
+    if (e.preventDefault) e.preventDefault();
     if (mode !== 'playing') return;
     lastInputKeyboard = false;
-    if (touch.id !== null && e.pointerId !== touch.id) {
+    const pid = pointerIdOf(e);
+    if (touch.id !== null && pid !== touch.id) {
       // second finger: always an immediate tap (stand up + jump / double jump)
       if (touch.pending) firePendingTap();
       WORLD.duckTouch = false;
       requestJump();
       return;
     }
-    touch.id = e.pointerId;
+    touch.id = pid;
     touch.x0 = e.clientX;
     touch.y0 = e.clientY;
     touch.t0 = performance.now();
@@ -1756,10 +1778,10 @@
     touch.pending = true;
     clearTimeout(touch.timer);
     touch.timer = setTimeout(firePendingTap, TAP_DELAY_MS);
-    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== touch.id || touch.swiped || mode !== 'playing') return;
+    try { if (e.pointerId != null && canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  }
+  function onPtrMove(e) {
+    if (pointerIdOf(e) !== touch.id || touch.swiped || mode !== 'playing') return;
     const dy = e.clientY - touch.y0;
     const dx = e.clientX - touch.x0;
     if (dy >= SWIPE_PX && dy > Math.abs(dx) * 1.3 && performance.now() - touch.t0 < 500) {
@@ -1771,16 +1793,43 @@
       startDuck(true);
       WORLD.stats.ducks += 1;
     }
-  });
+  }
   function endTouch(e) {
-    if (e.pointerId !== touch.id) return;
+    if (pointerIdOf(e) !== touch.id) return;
     if (touch.pending) firePendingTap();
     if (touch.swiped) WORLD.duckTouch = false;
     touch.id = null;
     touch.swiped = false;
   }
-  canvas.addEventListener('pointerup', endTouch);
-  canvas.addEventListener('pointercancel', endTouch);
+  if (window.PointerEvent) {
+    canvas.addEventListener('pointerdown', onPtrDown);
+    canvas.addEventListener('pointermove', onPtrMove);
+    canvas.addEventListener('pointerup', endTouch);
+    canvas.addEventListener('pointercancel', endTouch);
+  } else {
+    // iOS 12 / older Android WebViews have no PointerEvent
+    canvas.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      const t = e.changedTouches[0] || e.touches[0];
+      if (t) onPtrDown(t);
+    }, false);
+    canvas.addEventListener('touchmove', function (e) {
+      e.preventDefault();
+      const t = e.changedTouches[0] || e.touches[0];
+      if (t) onPtrMove(t);
+    }, false);
+    canvas.addEventListener('touchend', function (e) {
+      const t = (e.changedTouches && e.changedTouches[0]) || { identifier: touch.id };
+      endTouch(t);
+    }, false);
+    canvas.addEventListener('touchcancel', function (e) {
+      const t = (e.changedTouches && e.changedTouches[0]) || { identifier: touch.id };
+      endTouch(t);
+    }, false);
+    canvas.addEventListener('mousedown', function (e) { onPtrDown({ pointerId: 1, clientX: e.clientX, clientY: e.clientY, preventDefault: function () { e.preventDefault(); } }); });
+    canvas.addEventListener('mousemove', function (e) { onPtrMove({ pointerId: 1, clientX: e.clientX, clientY: e.clientY }); });
+    canvas.addEventListener('mouseup', function () { endTouch({ pointerId: 1 }); });
+  }
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -3805,7 +3854,7 @@
   }
 
   function renderGameOverDiorama() {
-    if (mode !== 'gameover') return;
+    if (mode !== 'gameover' || !goCtx || !goCanvas) return;
     goCtx.clearRect(0, 0, goCanvas.width, goCanvas.height);
 
     goCtx.fillStyle = '#140C1C';
@@ -3967,8 +4016,19 @@
     jump: () => requestJump(),
   };
 
-  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
-    showScreen('menu');
-    requestAnimationFrame(loop);
-  });
+  function bootGame() {
+    if (window.__MH_BOOTED) return;
+    window.__MH_BOOTED = true;
+    try {
+      showScreen('menu');
+      requestAnimationFrame(loop);
+    } catch (err) {
+      window.__MH_BOOTED = false;
+      if (window.__MH_CRASH) window.__MH_CRASH('BOOT', err && err.stack ? err.stack : String(err));
+    }
+  }
+  const fontReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  const fontCap = new Promise(function (resolve) { setTimeout(resolve, 400); });
+  Promise.race([fontReady, fontCap]).then(bootGame).catch(bootGame);
+  setTimeout(bootGame, 2500);
 })();
