@@ -54,14 +54,22 @@
           tgVersion: meta.v,
           tgPlatform: meta.plat
         });
-        var url = 'https://musthave-run-api.onrender.com/api/clientlog';
-        if (navigator.sendBeacon) {
-          navigator.sendBeacon(url, new Blob([body], { type: 'text/plain' }));
-        } else {
-          var x = new XMLHttpRequest();
-          x.open('POST', url, true);
-          x.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
-          x.send(body);
+        var urls = [
+          // 'https://musthave-run-api.netlify.app/api/clientlog', // uncomment after Netlify import
+          'https://musthave-run-api.onrender.com/api/clientlog'
+        ];
+        var i;
+        for (i = 0; i < urls.length; i++) {
+          try {
+            if (navigator.sendBeacon) {
+              navigator.sendBeacon(urls[i], new Blob([body], { type: 'text/plain' }));
+            } else {
+              var x = new XMLHttpRequest();
+              x.open('POST', urls[i], true);
+              x.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
+              x.send(body);
+            }
+          } catch (eLog) {}
         }
       } catch (e3) {}
     };
@@ -98,7 +106,7 @@
   })();
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect width=%2716%27 height=%2716%27 fill=%27%23FF4A8D%27/><rect x=%273%27 y=%273%27 width=%2710%27 height=%2710%27 fill=%27%23FFD100%27/></svg>" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <noscript>
@@ -293,7 +301,7 @@
   /* Do not load telegram-web-app.js synchronously: if telegram.org hangs, the page stays blank.
      Give it 1.5s, then start the game either way. */
   (function () {
-    var VERSION = '6';
+    var VERSION = '7';
     var files = [
       'js/sprites.js?v=' + VERSION,
       'js/audio.js?v=' + VERSION,

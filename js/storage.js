@@ -6,7 +6,7 @@ window.MH_STORAGE = (function () {
   const RESET_MS = 24 * 60 * 60 * 1000;
 
   // Telegram usernames (no '@'), compared case-insensitively to initDataUnsafe.user.username
-  const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh'];
+  const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh', 'andreisibiriakov', 've1er8'];
 
   // localStorage throws in some private modes, Desktop iframes and blocked-storage WebViews
   const memoryStore = {};

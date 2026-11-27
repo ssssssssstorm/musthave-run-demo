@@ -2,23 +2,44 @@
 window.MH_TG = (function () {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
-  // Online leaderboard API (separate Render web service). `?api=<url>` overrides it for local testing.
+  // Online leaderboard API. `?api=<url>` overrides the list for local testing.
+  // Try a RU-reachable proxy first (Netlify, once imported — see README), then Render.
   const DEFAULT_API = 'https://musthave-run-api.onrender.com';
+  const API_BASES = [
+    // 'https://musthave-run-api.netlify.app', // uncomment after the Netlify import
+    DEFAULT_API
+  ];
   const apiParam = new URLSearchParams(window.location.search).get('api');
-  function resolveApiBase() {
-    if (apiParam && /^https?:\/\//.test(apiParam)) return apiParam.replace(/\/+$/, '');
+  function isKnownOrigin(origin) {
+    if (!origin) return false;
+    if (origin === 'https://musthave-run.onrender.com') return true;
+    if (origin === 'https://ssssssssstorm.github.io') return true;
     try {
-      const origin = window.location.origin;
-      if (origin === 'https://musthave-run.onrender.com') return DEFAULT_API;
-      if (origin === 'https://ssssssssstorm.github.io') return DEFAULT_API;
+      const host = new URL(origin).hostname;
+      if (host === 'netlify.app' || host.slice(-12) === '.netlify.app') return true;
     } catch (_) {}
-    return null; // local / unknown origin: skip, so the console isn't filled with CORS errors
+    return false;
+  }
+  function resolveApiBases() {
+    if (apiParam && /^https?:\/\//.test(apiParam)) return [apiParam.replace(/\/+$/, '')];
+    try {
+      if (isKnownOrigin(window.location.origin)) {
+        const bases = [];
+        for (let i = 0; i < API_BASES.length; i++) {
+          const b = String(API_BASES[i] || '').replace(/\/+$/, '');
+          if (b && bases.indexOf(b) === -1) bases.push(b);
+        }
+        return bases;
+      }
+    } catch (_) {}
+    return []; // local / unknown origin: skip, so the console isn't filled with CORS errors
   }
   const CONFIG = {
     channelUsername: 'musthave_tobacco',
     channelUrl: 'https://t.me/musthave_tobacco',
     subscriptionApi: null,
-    apiBaseUrl: resolveApiBase(),
+    apiBases: resolveApiBases(),
+    apiBaseUrl: resolveApiBases()[0] || null,
   };
   const PENDING_KEY = 'mh_pending_scores_v1';
 
@@ -129,24 +150,58 @@ window.MH_TG = (function () {
     return !!getInitData();
   }
 
-  async function apiFetch(path, opts = {}, timeoutMs = 25000) {
-    if (!CONFIG.apiBaseUrl) throw new Error('no_api');
+  function fetchOne(base, path, opts, timeoutMs) {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
-    try {
-      const res = await fetch(CONFIG.apiBaseUrl + path, Object.assign({}, opts, ctl ? { signal: ctl.signal } : {}));
-      let data = null;
-      try { data = await res.json(); } catch (_) {}
-      return { status: res.status, data: data || {} };
-    } finally {
+    const timer = ctl ? setTimeout(function () { ctl.abort(); }, timeoutMs) : 0;
+    const raced = ctl
+      ? fetch(base + path, Object.assign({}, opts, { signal: ctl.signal }))
+      : Promise.race([
+          fetch(base + path, opts),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, timeoutMs); })
+        ]);
+    return Promise.resolve(raced).then(function (res) {
+      return res.json().then(function (data) {
+        return { status: res.status, data: data || {}, base: base };
+      }).catch(function () {
+        return { status: res.status, data: {}, base: base };
+      });
+    }).then(function (out) {
       if (timer) clearTimeout(timer);
+      return out;
+    }, function (err) {
+      if (timer) clearTimeout(timer);
+      throw err;
+    });
+  }
+
+  async function apiFetch(path, opts, timeoutMs) {
+    opts = opts || {};
+    const bases = CONFIG.apiBases && CONFIG.apiBases.length ? CONFIG.apiBases : (CONFIG.apiBaseUrl ? [CONFIG.apiBaseUrl] : []);
+    if (!bases.length) throw new Error('no_api');
+    let last = null;
+    for (let i = 0; i < bases.length; i++) {
+      const many = bases.length > 1;
+      const ms = timeoutMs != null ? timeoutMs : (many && i < bases.length - 1 ? 8000 : 25000);
+      try {
+        const res = await fetchOne(bases[i], path, opts, ms);
+        CONFIG.apiBaseUrl = bases[i];
+        if (res.status >= 500 && i < bases.length - 1) { last = res; continue; }
+        return res;
+      } catch (e) {
+        last = e;
+      }
     }
+    if (last && typeof last.status === 'number') return last;
+    throw last || new Error('no_api');
   }
 
   // Free Render services sleep when idle: wake the API as soon as the app opens
   function warmUp() {
-    if (!CONFIG.apiBaseUrl) return;
-    apiFetch('/api/health', {}, 60000).catch(() => {});
+    if (!CONFIG.apiBases || !CONFIG.apiBases.length) return;
+    // Hit every candidate so a sleeping origin can wake while the proxy answers.
+    for (let i = 0; i < CONFIG.apiBases.length; i++) {
+      fetchOne(CONFIG.apiBases[i], '/api/health', {}, 60000).catch(function () {});
+    }
   }
 
   function readPending() {

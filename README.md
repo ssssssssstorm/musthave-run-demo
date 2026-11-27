@@ -53,7 +53,7 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
 ## Compatibility & support
 - The game targets iOS 12+ Safari / WKWebView and Android WebView Chrome 61+ (ES2017). The Telegram SDK is loaded asynchronously with a 1.5 s timeout, so a hang on `telegram.org` no longer leaves a blank page.
 - If boot fails, a pixel fallback screen ("Что-то пошло не так") is shown with a short error code and a **Перезагрузить** button instead of a blank screen.
-- Client errors are POSTed to `https://musthave-run-api.onrender.com/api/clientlog` (user agent, Telegram version and platform, URL, error code / message; rate-limited, CORS `*`). To read them (requires `TELEGRAM_BOT_TOKEN`):
+- Client errors are POSTed to `/api/clientlog` on the API (user agent, Telegram version and platform, URL, error code / message; rate-limited, CORS `*`). To read them (requires `TELEGRAM_BOT_TOKEN`):
 
 ```bash
 # from a trusted machine that has the token in the environment — do not print the token
@@ -63,7 +63,24 @@ curl -sS -H "X-Admin-Ts: $TS" -H "X-Admin-Sig: $SIG" \
   "https://musthave-run-api.onrender.com/api/clientlog?limit=50"
 ```
 
-- **Mirror:** if `*.onrender.com` is slow or unreachable from a Russian ISP, a static copy of the game is at `https://ssssssssstorm.github.io/musthave-run-demo/` (same repo, GitHub Pages). The Telegram bot menu button still points at the Render URL until it is updated. The leaderboard API also lives on onrender.com, so the board may be offline on that mirror; the game itself still runs.
+- **Mirror (live bot URL):** the Telegram menu button opens `https://ssssssssstorm.github.io/musthave-run-demo/` (same repo, GitHub Pages, deploys automatically from `main` `/`). Use this when `*.onrender.com` is frozen by a Russian ISP. Cache-busting query (`?v=`) is on JS/CSS; a `<base href="/musthave-run-demo/">` is set so relative assets resolve.
+
+- **Leaderboard API and Russian ISPs:** the API itself still runs on Render (`https://musthave-run-api.onrender.com`) and has the same IP exposure. The client tries each API base in order with a short timeout (network / 5xx → next). A Netlify Functions reverse proxy is in this repo (`netlify.toml`, `netlify/functions/api-proxy.js`) so RU clients can reach the API via Netlify IPs while the function talks to Render. **This proxy is not live until the GitHub repo is imported in Netlify** (no Netlify account was available to deploy it automatically). After import:
+
+  1. Open [app.netlify.com](https://app.netlify.com) and sign in with GitHub (`sssssssssstorm`).
+  2. Add new site → Import an existing project → `ssssssssstorm/musthave-run-demo`.
+  3. Build command empty (or `true`), publish directory `.`. Preferred site name: `musthave-run-api` (URL `https://musthave-run-api.netlify.app`).
+  4. Tell us the URL. Then uncomment that origin in `js/telegram.js` (`API_BASES`) and in the `MH_LOG` URL list in `index.html`, bump the `?v=` cache query, and push. The client will try the proxy first, then Render. CORS already allows `https://ssssssssstorm.github.io` and `https://*.netlify.app`.
+
+- **Do not use Cloudflare Workers (`*.workers.dev`) or Cloudflare Pages as the RU path.** Since 9 June 2025 major RU ISPs (Rostelecom, Megafon, Vimpelcom, MTS, MGTS) have throttled Cloudflare traffic to ~16 KB and often reset connections (Cloudflare blog, 26 June 2025). `workers.dev` is also intermittently blocked.
+
+- **Host reachability from Russian mobile / metro networks, late 2026 (for a production move):**
+  - GitHub Pages (`github.io`) — good: 9/9 HTTPS from RU check-host nodes on 17 Nov 2026 ([htmlkin.ru measurement](https://htmlkin.ru/articles/netlify-vercel-github-pages-dostup-iz-rossii)). Best free static home for the Mini App (already in use).
+  - Netlify (`netlify.app`) — good: 9/9 in the same test; `netlify.app` is not in the RKN registry. Best free option for the API proxy + optional second static mirror.
+  - Vercel (`vercel.app`) — flaky: 5/9 in the same test; some Vercel IPs refuse connections from Moscow. Not a reliable primary.
+  - Cloudflare Pages / `workers.dev` — avoid for RU users (16 KB throttle / resets, as above).
+  - Yandex Object Storage, Timeweb, Selectel — the reliable long-term choice: Russian address space, no Western-IP filters. Object Storage can serve the static game; a small VPS or Cloud Functions should run the API (and can keep using Render Postgres via its external URL, or move the DB later).
+  - **Recommended production setup:** keep the Mini App on GitHub Pages (or copy it to Yandex Object Storage / Timeweb) and put the API (or at least this proxy) on a Russian VPS (~200–400 RUB/month, Timeweb / Selectel / Beget) or Yandex Cloud. A custom domain on a Russian host is the most stable option for colleagues on mobile operators. The Render API can stay as the origin behind the proxy until the API itself is migrated.
 
 ## Run Locally
 Serve the `/workspace/musthave-run` folder with any static HTTP server:

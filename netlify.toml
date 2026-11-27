@@ -1,0 +1,15 @@
+# Optional RU-reachable API proxy + second static mirror.
+# Import this repo in Netlify (see README). No build step.
+[build]
+  publish = "."
+  command = "true"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api-proxy"
+  status = 200
+  force = true

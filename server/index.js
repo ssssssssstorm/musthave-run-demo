@@ -15,7 +15,7 @@ const SEASON_ID = +process.env.SEASON_ID || 1;
 const AUTH_MAX_AGE_S = 24 * 3600;
 
 // keep in sync with js/storage.js
-const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh'];
+const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh', 'andreisibiriakov', 've1er8'];
 const DEFAULT_LIVES = 5;
 const VIP_LIVES = 100;
 
@@ -169,9 +169,24 @@ function clientIp(req) {
 function ipHash(ip) {
   return crypto.createHash('sha256').update('mh-ip:' + ip + ':' + (BOT_TOKEN ? BOT_TOKEN.slice(-6) : '')).digest('hex').slice(0, 16);
 }
+function originAllowed(origin) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.some(o => o === origin || (o.endsWith(':*') && origin.startsWith(o.slice(0, -1)) && /^\d+$/.test(origin.slice(o.length - 1))))) {
+    return true;
+  }
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== 'https:') return false;
+    if (u.hostname === 'ssssssssstorm.github.io') return true;
+    if (u.hostname === 'netlify.app' || u.hostname.endsWith('.netlify.app')) return true;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
 function corsHeaders(req) {
   const origin = req.headers.origin;
-  const allowed = origin && ALLOWED_ORIGINS.some(o => o === origin || (o.endsWith(':*') && origin.startsWith(o.slice(0, -1)) && /^\d+$/.test(origin.slice(o.length - 1))));
+  const allowed = originAllowed(origin);
   if (allowed) {
     return {
       'Access-Control-Allow-Origin': origin,
@@ -488,6 +503,13 @@ async function migrate() {
 }
 
 if (require.main === module) {
-  migrate().finally(() => server.listen(PORT, () => console.log('[api] listening on', PORT, 'origins', ALLOWED_ORIGINS.join(','))));
+  migrate().finally(() => server.listen(PORT, () => {
+    console.log('[api] listening on', PORT, 'origins', ALLOWED_ORIGINS.join(','));
+    try {
+      require('./set-menu-button').syncMenuButton().catch((e) => console.error('[menu] failed', e && e.message));
+    } catch (e) {
+      console.error('[menu] skipped', e && e.message);
+    }
+  }));
 }
 module.exports = { validateInitData, plausibility, server, migrate, pool, LIMITS };
