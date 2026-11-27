@@ -157,6 +157,17 @@ window.MH_STORAGE = (function () {
     save(state);
   }
 
+  // Bonus lives from score milestones; may exceed the daily cap. Cleared only when
+  // lives later drop to 0 and the 24h reset fires (lives return to the daily cap).
+  function grantLife(state, n) {
+    const add = Math.max(0, Math.floor(n || 1));
+    if (!add) return state;
+    state.lives = (state.lives || 0) + add;
+    if (state.lives > 0) state.depletedAt = null;
+    save(state);
+    return state;
+  }
+
   function getRemainingResetMs(state) {
     if (state.lives > 0) return 0;
     const at = state.depletedAt || Date.now();
@@ -186,6 +197,7 @@ window.MH_STORAGE = (function () {
     load,
     save,
     spendLife,
+    grantLife,
     getRemainingResetMs,
     getLeaderboard,
   };

@@ -232,8 +232,9 @@ const intIn = (v, lo, hi) => Number.isFinite(+v) && Math.floor(+v) === +v && +v 
 function cleanStats(rs) {
   const out = {};
   if (!rs || typeof rs !== 'object') return out;
-  const keys = ['runTimeMs', 'fruits', 'golden', 'maxMult', 'bounces', 'birdsPassed', 'magnets', 'shields', 'shieldBreaks', 'rains', 'smokes', 'doubles', 'comboBreaks', 'missed'];
+  const keys = ['runTimeMs', 'fruits', 'golden', 'maxMult', 'bounces', 'birdsPassed', 'magnets', 'shields', 'shieldBreaks', 'rains', 'smokes', 'doubles', 'comboBreaks', 'missed', 'bonusLives'];
   for (const k of keys) if (Number.isFinite(+rs[k])) out[k] = Math.max(0, Math.min(1e7, Math.floor(+rs[k])));
+  if (out.bonusLives !== undefined) out.bonusLives = Math.max(0, Math.min(3, out.bonusLives));
   if (typeof rs.v === 'string') out.v = rs.v.slice(0, 16);
   return out;
 }
@@ -309,13 +310,23 @@ async function handleScore(req, res) {
       return send(req, res, 429, { ok: false, error: 'too_fast' });
     }
     lastSubmit.set(u.id, now);
-    const maxRuns = (isVip(u.username) ? VIP_LIVES : DEFAULT_LIVES) + LIMITS.dailySlack;
+    const safeScore = intIn(score, 0, 2147483647) ? score : 0;
+    const expectedBonus = (safeScore >= 500 ? 1 : 0) + (safeScore >= 1000 ? 1 : 0) + (safeScore >= 1250 ? 1 : 0);
+    const claimedBonus = intIn(rs.bonusLives, 0, 3) ? rs.bonusLives : 0;
+    // Extra daily runs equal the bonuses actually earned on accepted 24h runs (plus this run, if it is plausible).
+    const currentBonus = reason ? 0 : Math.min(claimedBonus, expectedBonus);
+    if (!reason) rs.bonusLives = currentBonus;
+    const prevBonus = await client.query(
+      `SELECT COALESCE(SUM(GREATEST(0, LEAST(3, COALESCE((stats->>'bonusLives')::int, 0)))), 0)::int AS bonus
+       FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours' AND accepted = true`,
+      [u.id]
+    );
+    const maxRuns = (isVip(u.username) ? VIP_LIVES : DEFAULT_LIVES) + LIMITS.dailySlack + (prevBonus.rows[0].bonus || 0) + currentBonus;
     const cnt = await client.query(`SELECT COUNT(*)::int AS n FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours'`, [u.id]);
     if (cnt.rows[0].n >= maxRuns) {
       await client.query('ROLLBACK');
       return send(req, res, 429, { ok: false, error: 'daily_cap', maxRuns });
     }
-    const safeScore = intIn(score, 0, 2147483647) ? score : 0;
     const safeTime = intIn(runTimeMs, 0, 2147483647) ? runTimeMs : 0;
     const ins = await client.query(
       `INSERT INTO runs (season_id, tg_id, client_run_id, score, run_time_ms, fruits, stats, accepted, reject_reason, ip_hash)
@@ -483,6 +494,15 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/leaderboard' && req.method === 'GET') return await handleLeaderboard(req, res, url);
     if (url.pathname === '/api/clientlog' && req.method === 'POST') return await handleClientLog(req, res);
     if (url.pathname === '/api/clientlog' && req.method === 'GET') return await handleClientLogList(req, res, url);
+    const tgBot = require('./telegram-bot');
+    if (req.method === 'POST' && tgBot.matchesWebhookPath(url.pathname)) {
+      return await tgBot.handleWebhook(req, res, readJson);
+    }
+    if (url.pathname === '/api/admin/tgstatus' && req.method === 'GET') {
+      if (!checkAdmin(req, 'tg')) return send(req, res, 403, { ok: false });
+      const st = await tgBot.webhookStatus();
+      return send(req, res, 200, { ok: true, webhook: st });
+    }
     const m = url.pathname.match(/^\/api\/admin\/player\/(\d{1,20})$/);
     if (m && req.method === 'DELETE') return await handleAdminDelete(req, res, m[1]);
     return send(req, res, 404, { ok: false, error: 'not_found' });
@@ -509,6 +529,11 @@ if (require.main === module) {
       require('./set-menu-button').syncMenuButton().catch((e) => console.error('[menu] failed', e && e.message));
     } catch (e) {
       console.error('[menu] skipped', e && e.message);
+    }
+    try {
+      require('./telegram-bot').syncBot().catch((e) => console.error('[tg] failed', e && e.message));
+    } catch (e) {
+      console.error('[tg] skipped', e && e.message);
     }
     if (process.env.PROXY_PROBE === '1') {
       require('./proxy-e2e').runProxyE2E().catch((e) => console.error('[proxy-e2e] fail', e && e.message));

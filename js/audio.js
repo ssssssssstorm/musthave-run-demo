@@ -57,14 +57,8 @@ window.MH_AUDIO = (function () {
   }
 
   // ============================================================
-  // MUSIC: "Mango Beach" - bouncy summer chiptune, 8 bars @ 118 BPM, loops forever
+  // MUSIC: 4 looping chiptune tracks. Milestones crossfade to the next.
   // ============================================================
-  const BPM = 118;
-  const STEP = 60 / BPM / 4;   // one 16th note
-  const BAR_STEPS = 16;
-  const BAR_LEN = STEP * BAR_STEPS;
-  const BARS = 8;
-
   const NOTE_IDX = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
   function midi(name) {
     const m = /^([A-G])(#?)(\d)$/.exec(name);
@@ -74,26 +68,86 @@ window.MH_AUDIO = (function () {
     return 440 * Math.pow(2, (midi(name) - 69) / 12);
   }
 
-  // chord per bar: root (bass), fifth, stab triad
   const CH = {
-    C: { root: 'C3', fifth: 'G3', stab: ['E4', 'G4', 'C5'] },
-    G: { root: 'G2', fifth: 'D3', stab: ['D4', 'G4', 'B4'] },
-    A: { root: 'A2', fifth: 'E3', stab: ['C4', 'E4', 'A4'] },
-    F: { root: 'F2', fifth: 'C3', stab: ['C4', 'F4', 'A4'] },
+    C:  { root: 'C3',  fifth: 'G3',  stab: ['E4', 'G4', 'C5'] },
+    G:  { root: 'G2',  fifth: 'D3',  stab: ['D4', 'G4', 'B4'] },
+    A:  { root: 'A2',  fifth: 'E3',  stab: ['C4', 'E4', 'A4'] },
+    F:  { root: 'F2',  fifth: 'C3',  stab: ['C4', 'F4', 'A4'] },
+    Dm: { root: 'D3',  fifth: 'A3',  stab: ['D4', 'F4', 'A4'] },
+    Em: { root: 'E2',  fifth: 'B2',  stab: ['E4', 'G4', 'B4'] },
+    Bb: { root: 'A#2', fifth: 'F3',  stab: ['D4', 'F4', 'A#4'] },
+    D:  { root: 'D3',  fifth: 'A3',  stab: ['F#4', 'A4', 'D5'] },
+    E:  { root: 'E3',  fifth: 'B3',  stab: ['G#4', 'B4', 'E5'] },
+    Am: { root: 'A2',  fifth: 'E3',  stab: ['C4', 'E4', 'A4'] },
   };
-  const PROG = ['C', 'G', 'A', 'F', 'C', 'G', 'F', 'G'];
 
-  // melody: [step, note, lengthInSteps]
-  const MELODY = [
-    [[0, 'E5', 2], [2, 'G5', 2], [4, 'A5', 2], [6, 'G5', 2], [8, 'E5', 4], [12, 'D5', 2], [14, 'E5', 2]],
-    [[0, 'G5', 2], [2, 'A5', 2], [4, 'B5', 2], [6, 'A5', 2], [8, 'G5', 4], [12, 'D5', 4]],
-    [[0, 'A5', 2], [2, 'C6', 2], [4, 'E6', 3], [7, 'D6', 1], [8, 'C6', 2], [10, 'A5', 2], [12, 'E5', 4]],
-    [[0, 'F5', 2], [2, 'A5', 2], [4, 'C6', 2], [6, 'A5', 2], [8, 'F5', 2], [10, 'G5', 2], [12, 'A5', 4]],
-    [[0, 'E5', 2], [2, 'G5', 2], [4, 'C6', 2], [6, 'D6', 2], [8, 'E6', 4], [12, 'D6', 2], [14, 'C6', 2]],
-    [[0, 'B5', 2], [2, 'D6', 2], [4, 'G6', 3], [7, 'D6', 1], [8, 'B5', 2], [10, 'G5', 2], [12, 'A5', 2], [14, 'B5', 2]],
-    [[0, 'A5', 2], [2, 'C6', 2], [4, 'F6', 3], [7, 'E6', 1], [8, 'C6', 4], [12, 'A5', 4]],
-    [[0, 'G5', 2], [2, 'B5', 2], [4, 'D6', 2], [6, 'B5', 2], [8, 'G5', 2], [10, 'A5', 2], [12, 'B5', 2], [14, 'D6', 2]],
+  const TRACKS = [
+    {
+      name: 'Mango Beach',
+      bpm: 118,
+      prog: ['C', 'G', 'A', 'F', 'C', 'G', 'F', 'G'],
+      melody: [
+        [[0, 'E5', 2], [2, 'G5', 2], [4, 'A5', 2], [6, 'G5', 2], [8, 'E5', 4], [12, 'D5', 2], [14, 'E5', 2]],
+        [[0, 'G5', 2], [2, 'A5', 2], [4, 'B5', 2], [6, 'A5', 2], [8, 'G5', 4], [12, 'D5', 4]],
+        [[0, 'A5', 2], [2, 'C6', 2], [4, 'E6', 3], [7, 'D6', 1], [8, 'C6', 2], [10, 'A5', 2], [12, 'E5', 4]],
+        [[0, 'F5', 2], [2, 'A5', 2], [4, 'C6', 2], [6, 'A5', 2], [8, 'F5', 2], [10, 'G5', 2], [12, 'A5', 4]],
+        [[0, 'E5', 2], [2, 'G5', 2], [4, 'C6', 2], [6, 'D6', 2], [8, 'E6', 4], [12, 'D6', 2], [14, 'C6', 2]],
+        [[0, 'B5', 2], [2, 'D6', 2], [4, 'G6', 3], [7, 'D6', 1], [8, 'B5', 2], [10, 'G5', 2], [12, 'A5', 2], [14, 'B5', 2]],
+        [[0, 'A5', 2], [2, 'C6', 2], [4, 'F6', 3], [7, 'E6', 1], [8, 'C6', 4], [12, 'A5', 4]],
+        [[0, 'G5', 2], [2, 'B5', 2], [4, 'D6', 2], [6, 'B5', 2], [8, 'G5', 2], [10, 'A5', 2], [12, 'B5', 2], [14, 'D6', 2]],
+      ],
+    },
+    {
+      name: 'Peach Bounce',
+      bpm: 126,
+      prog: ['Am', 'F', 'C', 'G', 'Am', 'F', 'Dm', 'E'],
+      melody: [
+        [[0, 'C5', 2], [2, 'E5', 2], [4, 'A5', 3], [7, 'G5', 1], [8, 'E5', 2], [10, 'C5', 2], [12, 'D5', 4]],
+        [[0, 'A4', 2], [2, 'C5', 2], [4, 'F5', 2], [6, 'A5', 2], [8, 'G5', 4], [12, 'F5', 4]],
+        [[0, 'G5', 2], [2, 'E5', 2], [4, 'C6', 3], [7, 'B5', 1], [8, 'G5', 2], [10, 'E5', 2], [12, 'C5', 4]],
+        [[0, 'D5', 2], [2, 'G5', 2], [4, 'B5', 2], [6, 'D6', 2], [8, 'B5', 2], [10, 'G5', 2], [12, 'A5', 4]],
+        [[0, 'A5', 2], [2, 'C6', 2], [4, 'E6', 2], [6, 'C6', 2], [8, 'A5', 4], [12, 'E5', 4]],
+        [[0, 'F5', 2], [2, 'A5', 2], [4, 'C6', 3], [7, 'A5', 1], [8, 'F5', 2], [10, 'D5', 2], [12, 'F5', 4]],
+        [[0, 'D5', 2], [2, 'F5', 2], [4, 'A5', 2], [6, 'F5', 2], [8, 'D5', 4], [12, 'A4', 4]],
+        [[0, 'E5', 2], [2, 'G#5', 2], [4, 'B5', 2], [6, 'E6', 2], [8, 'B5', 2], [10, 'G#5', 2], [12, 'E5', 4]],
+      ],
+    },
+    {
+      name: 'Pineapple Parade',
+      bpm: 132,
+      prog: ['G', 'D', 'Em', 'C', 'G', 'D', 'C', 'D'],
+      melody: [
+        [[0, 'D5', 2], [2, 'G5', 2], [4, 'B5', 2], [6, 'G5', 2], [8, 'D5', 2], [10, 'E5', 2], [12, 'G5', 4]],
+        [[0, 'F#5', 2], [2, 'A5', 2], [4, 'D6', 3], [7, 'A5', 1], [8, 'F#5', 4], [12, 'D5', 4]],
+        [[0, 'E5', 2], [2, 'G5', 2], [4, 'B5', 2], [6, 'E6', 2], [8, 'B5', 4], [12, 'G5', 4]],
+        [[0, 'E5', 2], [2, 'G5', 2], [4, 'C6', 3], [7, 'G5', 1], [8, 'E5', 2], [10, 'C5', 2], [12, 'D5', 4]],
+        [[0, 'G5', 2], [2, 'B5', 2], [4, 'D6', 2], [6, 'G6', 2], [8, 'D6', 4], [12, 'B5', 4]],
+        [[0, 'A5', 2], [2, 'F#5', 2], [4, 'D6', 2], [6, 'A5', 2], [8, 'F#5', 4], [12, 'D5', 4]],
+        [[0, 'C6', 2], [2, 'G5', 2], [4, 'E5', 2], [6, 'G5', 2], [8, 'C6', 4], [12, 'E6', 4]],
+        [[0, 'D6', 2], [2, 'A5', 2], [4, 'F#5', 2], [6, 'A5', 2], [8, 'D6', 2], [10, 'F#6', 2], [12, 'A6', 4]],
+      ],
+    },
+    {
+      name: 'Vice Sunset',
+      bpm: 108,
+      prog: ['Am', 'Em', 'F', 'G', 'Am', 'Dm', 'F', 'E'],
+      melody: [
+        [[0, 'A4', 4], [4, 'C5', 2], [6, 'E5', 2], [8, 'A5', 4], [12, 'G5', 4]],
+        [[0, 'B4', 2], [2, 'E5', 2], [4, 'G5', 4], [8, 'E5', 4], [12, 'B4', 4]],
+        [[0, 'C5', 2], [2, 'F5', 2], [4, 'A5', 3], [7, 'G5', 1], [8, 'F5', 4], [12, 'C5', 4]],
+        [[0, 'D5', 2], [2, 'G5', 2], [4, 'B5', 4], [8, 'G5', 2], [10, 'D5', 2], [12, 'G4', 4]],
+        [[0, 'A5', 4], [4, 'E5', 2], [6, 'C5', 2], [8, 'A4', 4], [12, 'C5', 4]],
+        [[0, 'F5', 2], [2, 'A5', 2], [4, 'D6', 4], [8, 'A5', 4], [12, 'F5', 4]],
+        [[0, 'C6', 2], [2, 'A5', 2], [4, 'F5', 4], [8, 'C5', 4], [12, 'A4', 4]],
+        [[0, 'G#5', 2], [2, 'E5', 2], [4, 'B4', 2], [6, 'E5', 2], [8, 'G#5', 4], [12, 'B5', 4]],
+      ],
+    },
   ];
+
+  function trackTiming(tr) {
+    const step = 60 / tr.bpm / 4;
+    return { step: step, barLen: step * 16, bars: tr.prog.length };
+  }
 
   let pulseWave = null;
   let noiseBuf = null;
@@ -149,8 +203,9 @@ window.MH_AUDIO = (function () {
     src.stop(t + dur + 0.02);
   }
 
-  // schedule one bar of every voice onto `bus` starting at time `t0`
-  function scheduleBar(c, bus, t0, barIdx) {
+  function scheduleBar(c, bus, t0, barIdx, track) {
+    const tr = track || TRACKS[currentTrack] || TRACKS[0];
+    const tm = trackTiming(tr);
     if (!pulseWave || pulseWave.__c !== c) {
       pulseWave = makePulse(c, 0.25);
       pulseWave.__c = c;
@@ -159,37 +214,39 @@ window.MH_AUDIO = (function () {
       noiseBuf = makeNoise(c);
       noiseBuf.__c = c;
     }
-    const ch = CH[PROG[barIdx % BARS]];
+    const bars = tr.prog.length;
+    const ch = CH[tr.prog[barIdx % bars]];
+    const melody = tr.melody[barIdx % bars];
+    const STEP = tm.step;
 
-    // lead melody (25% pulse, soft)
-    for (const [st, nm, len] of MELODY[barIdx % BARS]) {
+    for (let i = 0; i < melody.length; i++) {
+      const st = melody[i][0], nm = melody[i][1], len = melody[i][2];
       const t = t0 + st * STEP;
       const d = len * STEP * 0.92;
       note(c, bus, t, hz(nm), d, 0.05, 'pulse', { atk: 0.01 });
-      // tiny octave sparkle on long notes
       if (len >= 4) note(c, bus, t + STEP * 2, hz(nm) * 2, STEP * 1.6, 0.012, 'square');
     }
 
-    // bass: root on 1, fifth on 3, bouncy pickup
     note(c, bus, t0, hz(ch.root), STEP * 3, 0.13, 'triangle');
     note(c, bus, t0 + STEP * 3, hz(ch.root), STEP * 1.5, 0.1, 'triangle');
     note(c, bus, t0 + STEP * 8, hz(ch.fifth), STEP * 3, 0.12, 'triangle');
     note(c, bus, t0 + STEP * 11, hz(ch.root) * 2, STEP * 1.5, 0.08, 'triangle');
 
-    // off-beat chord stabs (reggae-ish upstroke)
-    for (const st of [2, 6, 10, 14]) {
-      for (const nm of ch.stab) {
-        note(c, bus, t0 + st * STEP, hz(nm), STEP * 1.1, 0.011, 'square', { atk: 0.003 });
+    const stabs = [2, 6, 10, 14];
+    for (let s = 0; s < stabs.length; s++) {
+      for (let n = 0; n < ch.stab.length; n++) {
+        note(c, bus, t0 + stabs[s] * STEP, hz(ch.stab[n]), STEP * 1.1, 0.011, 'square', { atk: 0.003 });
       }
     }
 
-    // drums: soft kick on 1 & 3, clap on 2 & 4, hats on 8ths
-    for (const st of [0, 8]) {
-      note(c, bus, t0 + st * STEP, 120, 0.12, 0.2, 'sine', { slideTo: 42, atk: 0.002 });
+    const kicks = [0, 8];
+    for (let k = 0; k < kicks.length; k++) {
+      note(c, bus, t0 + kicks[k] * STEP, 120, 0.12, 0.2, 'sine', { slideTo: 42, atk: 0.002 });
     }
     note(c, bus, t0 + 11 * STEP, 110, 0.09, 0.09, 'sine', { slideTo: 42, atk: 0.002 });
-    for (const st of [4, 12]) {
-      noiseHit(c, bus, t0 + st * STEP, 0.09, 0.05, 1500);
+    const claps = [4, 12];
+    for (let k = 0; k < claps.length; k++) {
+      noiseHit(c, bus, t0 + claps[k] * STEP, 0.09, 0.05, 1500);
     }
     for (let st = 0; st < 16; st += 2) {
       noiseHit(c, bus, t0 + st * STEP, 0.03, st % 4 === 2 ? 0.035 : 0.018, 7000);
@@ -201,33 +258,76 @@ window.MH_AUDIO = (function () {
   let nextBarTime = 0;
   let barIdx = 0;
   let musicPlaying = false;
+  let currentTrack = 0;
+
+  function fadeOutBus(bus, sec) {
+    if (!bus || !ctx) return;
+    try {
+      bus.gain.cancelScheduledValues(ctx.currentTime);
+      bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), ctx.currentTime);
+      bus.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + sec);
+    } catch (e) { /* noop */ }
+    setTimeout(function () {
+      try { bus.disconnect(); if (bus.__lp) bus.__lp.disconnect(); } catch (e2) { /* noop */ }
+    }, Math.ceil((sec + 0.08) * 1000));
+  }
+
+  function attachMusicBus(c, fadeSec) {
+    const bus = c.createGain();
+    const start = fadeSec > 0 ? 0.0001 : MUSIC_LEVEL;
+    bus.gain.setValueAtTime(start, c.currentTime);
+    if (fadeSec > 0) bus.gain.linearRampToValueAtTime(MUSIC_LEVEL, c.currentTime + fadeSec);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 5200;
+    bus.connect(lp);
+    lp.connect(masterBus);
+    bus.__lp = lp;
+    return bus;
+  }
 
   function musicTick() {
     if (!ctx || !musicBus) return;
+    const tm = trackTiming(TRACKS[currentTrack] || TRACKS[0]);
     while (nextBarTime < ctx.currentTime + 0.7) {
-      scheduleBar(ctx, musicBus, nextBarTime, barIdx);
-      nextBarTime += BAR_LEN;
-      barIdx = (barIdx + 1) % BARS;
+      scheduleBar(ctx, musicBus, nextBarTime, barIdx, TRACKS[currentTrack]);
+      nextBarTime += tm.barLen;
+      barIdx = (barIdx + 1) % tm.bars;
     }
   }
 
   function startMusic() {
-    if (!musicEnabled || musicPlaying) return;
+    if (!musicEnabled) return;
     const c = getCtx();
     if (!c) return;
-    musicBus = c.createGain();
-    musicBus.gain.value = MUSIC_LEVEL;
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 5200;
-    musicBus.connect(lp);
-    lp.connect(masterBus);
-    musicBus.__lp = lp;
+    if (musicPlaying) return;
+    musicBus = attachMusicBus(c, 0);
     nextBarTime = c.currentTime + 0.08;
     barIdx = 0;
     musicPlaying = true;
     musicTick();
     musicTimer = setInterval(musicTick, 180);
+  }
+
+  function setTrack(idx, fadeSec) {
+    fadeSec = fadeSec == null ? 0.45 : fadeSec;
+    const n = TRACKS.length;
+    idx = ((idx % n) + n) % n;
+    if (!musicEnabled) { currentTrack = idx; return; }
+    if (musicPlaying && currentTrack === idx) return;
+    currentTrack = idx;
+    if (!unlocked) return;
+    const c = getCtx();
+    if (!c) return;
+    if (!musicPlaying) {
+      startMusic();
+      return;
+    }
+    fadeOutBus(musicBus, fadeSec);
+    musicBus = attachMusicBus(c, fadeSec);
+    nextBarTime = c.currentTime + 0.06;
+    barIdx = 0;
+    musicTick();
   }
 
   function stopMusic() {
@@ -237,16 +337,7 @@ window.MH_AUDIO = (function () {
     musicTimer = null;
     const bus = musicBus;
     musicBus = null;
-    if (bus && ctx) {
-      try {
-        bus.gain.cancelScheduledValues(ctx.currentTime);
-        bus.gain.setValueAtTime(bus.gain.value, ctx.currentTime);
-        bus.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.12);
-      } catch (e) { /* noop */ }
-      setTimeout(() => {
-        try { bus.disconnect(); bus.__lp.disconnect(); } catch (e) { /* noop */ }
-      }, 220);
-    }
+    fadeOutBus(bus, 0.12);
   }
 
   // First user gesture unlocks audio and starts the music
@@ -311,20 +402,35 @@ window.MH_AUDIO = (function () {
       return musicPlaying && !!ctx && ctx.state === 'running';
     },
     getDebug() {
-      return { state: ctx ? ctx.state : 'none', playing: musicPlaying, unlocked, hiddenPaused };
+      return { state: ctx ? ctx.state : 'none', playing: musicPlaying, unlocked, hiddenPaused, track: currentTrack, trackName: (TRACKS[currentTrack] || TRACKS[0]).name };
     },
     unlock,
     startMusic,
     stopMusic,
+    setTrack,
+    getTrack() { return currentTrack; },
+    trackCount() { return TRACKS.length; },
+    lifeUp() {
+      tone(523, 0.08, 'square', 0.05, 784);
+      tone(659, 0.10, 'square', 0.05, null, 0.07);
+      tone(1047, 0.16, 'triangle', 0.06, null, 0.14);
+    },
+    rankUp() {
+      tone(392, 0.08, 'square', 0.05, 523);
+      tone(523, 0.09, 'square', 0.05, null, 0.07);
+      tone(659, 0.10, 'square', 0.05, null, 0.14);
+      tone(784, 0.18, 'triangle', 0.06, null, 0.22);
+    },
     // test helper: render N bars of the music offline and return summary stats
     renderMusicStats(bars = 8) {
       const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
       const sr = 22050;
-      const oc = new AC(1, Math.ceil(sr * BAR_LEN * bars), sr);
+      const tm = trackTiming(TRACKS[0]);
+      const oc = new AC(1, Math.ceil(sr * tm.barLen * bars), sr);
       const bus = oc.createGain();
       bus.gain.value = MUSIC_LEVEL;
       bus.connect(oc.destination);
-      for (let b = 0; b < bars; b++) scheduleBar(oc, bus, b * BAR_LEN, b);
+      for (let b = 0; b < bars; b++) scheduleBar(oc, bus, b * tm.barLen, b, TRACKS[0]);
       return oc.startRendering().then((buf) => {
         const d = buf.getChannelData(0);
         let peak = 0, sum = 0;

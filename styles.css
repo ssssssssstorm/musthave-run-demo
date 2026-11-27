@@ -517,7 +517,12 @@ html, body {
 }
 
 .go-tease {
-  font-size: 9px;
+  font-size: 8px;
+  line-height: 1.4;
+  max-width: 230px;
+  padding: 0 8px;
+  text-align: center;
+  white-space: normal;
   color: var(--pineapple);
   text-shadow: 1px 1px 0 var(--ink);
 }

@@ -41,9 +41,21 @@
   const FLIP_DUR = 0.52;        // somersault duration, 8 pixel steps
   const FLIP_STEPS = 8;
 
-  // Speed: starts calm and eases into the original pace curve (105 + 2.1/s, capped at 220)
+  // Speed: calm start, then the original time curve until the first score milestone.
+  // At 500 / 1000 / 1500 / ... speed drops a bit and ramps back up (sawtooth, slight net growth).
+  const RANK_EVERY = 500;
+  const SPEED_MIN = 70;
+  const SPEED_MAX = 220;
+  const SPEED_DROP = 0.84;
+  const SPEED_RAMP = 2.1;
+  function baseSpeedAt(t) {
+    return Math.min(SPEED_MAX, 105 + SPEED_RAMP * t - 35 * Math.exp(-t / 14));
+  }
   function speedAt(t) {
-    return Math.min(220, 105 + 2.1 * t - 35 * Math.exp(-t / 14));
+    if (WORLD && WORLD.rankIndex > 0) {
+      return Math.min(SPEED_MAX, Math.max(SPEED_MIN, WORLD.speedFloor + SPEED_RAMP * (WORLD.rankTime || 0)));
+    }
+    return baseSpeedAt(t);
   }
 
   // time window (s after take-off) during which a single jump keeps the corgi's feet above `h` px
@@ -85,14 +97,32 @@
   defObstacle('shilavilki', MH_SPRITES.obstacles.shilavilki, [{ x: 2, y: 3, w: 12, h: 10 }, { x: 5, y: 12, w: 6, h: 16 }]);
   defObstacle('coals', MH_SPRITES.obstacles.coals[0], [{ x: 4, y: 4, w: 16, h: 8 }]);
   OBST.hookahBig.dj = doubleProfile(OBST.hookahBig.hth);
-  // Low-flying bird: the sprite sits `lift` px above the ground so it clearly reads as flying (bottom
-  // of the 9px sprite is 18px up, just at the standing corgi's head / hat). The hit rect extends a
-  // few pixels below the sprite so a standing corgi (hit top 14px up) is still hit, while a ducking
-  // one (hit top 9px up) slides under. It can also be jumped (feet must rise ~26px).
+  // Duck-only bird flock. The lowest bird uses the old fair window: standing corgi (hit top 14px
+  // up) is hit, a duck (hit top 9px) slides under. Higher birds fill the single- and double-jump
+  // (and trampoline) arc, so jumping is never a way through. Always a solo pattern with extra gap.
   defObstacle('bird', MH_SPRITES.obstacles.bird[0], [{ x: 2, y: 1, w: 12, h: 15 }]);
+  const BIRD_FLOCK = [
+    { dx: 0, dy: 0 },
+    { dx: 6, dy: -16 },
+    { dx: -4, dy: -32 },
+    { dx: 8, dy: -48 },
+    { dx: -2, dy: -64 },
+    { dx: 5, dy: -80 },
+    { dx: -6, dy: -96 },
+    { dx: 3, dy: -112 },
+  ];
   OBST.bird.lift = 18;
-  OBST.bird.hth = 26;
   OBST.bird.air = true;
+  OBST.bird.duckOnly = true;
+  OBST.bird.flock = BIRD_FLOCK;
+  OBST.bird.rects = BIRD_FLOCK.map(function (m, i) {
+    return { x: 2 + m.dx, y: 1 + m.dy, w: 12, h: i === 0 ? 15 : 14 };
+  });
+  OBST.bird.bx0 = Math.min.apply(null, OBST.bird.rects.map(function (r) { return r.x; }));
+  OBST.bird.bx1 = Math.max.apply(null, OBST.bird.rects.map(function (r) { return r.x + r.w; }));
+  OBST.bird.by0 = Math.min.apply(null, OBST.bird.rects.map(function (r) { return r.y; }));
+  OBST.bird.wHit = OBST.bird.bx1 - OBST.bird.bx0;
+  OBST.bird.hth = 200;
   // MUSTHAVE tin trampoline: no hit rects, it launches the corgi high (with a flip)
   OBST.tramp = { kind: 'tramp', w: 24, h: 10, rects: [], bx0: 0, bx1: 24, by0: 0, wHit: 24, hth: 0, big: false, pad: true };
   const DUCK_TOP = 9;              // ducking hit box reaches 9px above the ground
@@ -102,11 +132,12 @@
   function trampAir() { return (2 * trampV()) / GRAVITY; }
 
   function obstUpTime(d) {
-    if (d.pad) return 0;
+    if (d.pad || d.duckOnly) return 0;
     return d.big ? d.dj.up : singleWindow(d.hth)[0];
   }
   function obstLandTime(d) {
     if (d.pad) return trampAir() + 0.35;   // the bounce may start until the rear paw leaves the tin
+    if (d.duckOnly) return 0.22;          // short recover from a duck before the next jump
     return d.big ? d.dj.land : AIR_T;
   }
 
@@ -123,14 +154,15 @@
     tramp: ['ПАЧКА-БАТУТ!', 'ПОДКИНЕТ ВЫСОКО'],
     golden: ['ЗОЛОТОЙ ФРУКТ', '+5 ОЧКОВ'],
     magnet: ['УГОЛЕК-МАГНИТ', 'ТЯНЕТ ФРУКТЫ'],
-    bird: ['ПТИЦА! ПРИГНИСЬ', 'СВАЙП ВНИЗ'],
+    bird: ['СТАЯ! ПРИГНИСЬ', 'СВАЙП ВНИЗ'],
     shield: ['КОЛПАК-ЩИТ', 'СПАСЕТ ОТ УДАРА'],
     smoke: ['ДЫМ ОТ УГЛЕЙ!', 'СМОТРИ СКВОЗЬ'],
   };
   // Minimum fair hit-box gap (px) between obstacle a (passed first) and b at world speed v:
   // the corgi has to land from a, react, and be airborne high enough again when it reaches b.
   function requiredGapPx(a, b, v) {
-    const t = obstLandTime(a) + REACT_T + obstUpTime(b) - obstUpTime(a);
+    const extra = b && b.duckOnly ? 0.2 : 0; // land + react, then a little more time to start a duck
+    const t = obstLandTime(a) + REACT_T + extra + obstUpTime(b) - obstUpTime(a);
     return Math.max(8, (v + 6) * t - a.wHit);
   }
   // Max hit-box gap (px) at which two small obstacles can still both be cleared by ONE jump
@@ -1110,6 +1142,7 @@
       tramps: 0, bounces: 0, birds: 0, birdsPassed: 0, ducks: 0, fastFalls: 0,
       magnets: 0, shields: 0, shieldBreaks: 0, golden: 0, goldenSpawned: 0,
       fruits: 0, pickupsSpawned: 0, rains: 0, rainFruit: 0, smokes: 0, maxMult: 1, comboBreaks: 0, missed: 0,
+      bonusLives: 0,
     };
   }
   WORLD.stats = newStats();
@@ -1154,6 +1187,10 @@
   }
 
   function resetRunWorld() {
+    WORLD.bonusAwarded = [false, false, false];
+    WORLD.rankIndex = 0;
+    WORLD.rankTime = 0;
+    WORLD.speedFloor = 0;
     WORLD.speed = speedAt(0);
     WORLD.score = 0;
     WORLD.runTime = 0;
@@ -1208,6 +1245,9 @@
     WORLD.corgi.wasDucking = false;
     WORLD.stats = newStats();
     WORLD.runId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    if (window.MH_AUDIO && typeof MH_AUDIO.setTrack === 'function') {
+      try { MH_AUDIO.setTrack(0, 0.25); } catch (e) {}
+    }
     updateHUDPills(false);
     updateStatusHUD(true);
   }
@@ -1328,6 +1368,48 @@
 
   function addPopup(x, y, text, color = '#FFD100', life = 0.8) {
     WORLD.popups.push({ x, y, text, color, life, maxLife: life });
+  }
+
+  const BONUS_AT = [500, 1000, 1250];
+  function grantBonusLife() {
+    WORLD.stats.bonusLives = (WORLD.stats.bonusLives || 0) + 1;
+    if (MH_STORAGE.grantLife) MH_STORAGE.grantLife(saveState, 1);
+    else { saveState.lives = (saveState.lives || 0) + 1; MH_STORAGE.save(saveState); }
+    updateHUDPills(true);
+    const c = WORLD.corgi;
+    addPopup(Math.round(W / 2), Math.round(H * 0.36), '+1 ЖИЗНЬ!', '#FF4A8D', 1.45);
+    spawnRing(c.x + 14, c.y + 4, 12, ['#FF4A8D', '#FFD100', '#FFF9F2'], 42, 0.7);
+    if (MH_AUDIO.lifeUp) MH_AUDIO.lifeUp();
+    MH_TG.haptic('medium');
+  }
+  function applyRankUp(n) {
+    const cur = WORLD.speed || baseSpeedAt(WORLD.runTime || 0);
+    WORLD.speedFloor = Math.max(SPEED_MIN, Math.round(cur * SPEED_DROP));
+    WORLD.speed = WORLD.speedFloor;
+    WORLD.rankTime = 0;
+    WORLD.rankIndex = n;
+    if (window.MH_AUDIO && typeof MH_AUDIO.setTrack === 'function') {
+      try { MH_AUDIO.setTrack(n, 0.45); } catch (e) {}
+    }
+    if (MH_AUDIO.rankUp) MH_AUDIO.rankUp();
+    WORLD.banner = { lines: ['НОВЫЙ РАНГ', String(n * RANK_EVERY)], t: 0, dur: 2.2 };
+    MH_TG.haptic('medium');
+  }
+  function onScoreChanged(prev) {
+    const next = WORLD.score;
+    if (!(next > prev)) return;
+    if (!WORLD.bonusAwarded) WORLD.bonusAwarded = [false, false, false];
+    for (let i = 0; i < BONUS_AT.length; i++) {
+      if (!WORLD.bonusAwarded[i] && prev < BONUS_AT[i] && next >= BONUS_AT[i]) {
+        WORLD.bonusAwarded[i] = true;
+        grantBonusLife();
+      }
+    }
+    const prevM = Math.floor(Math.max(0, prev) / RANK_EVERY);
+    const nextM = Math.floor(Math.max(0, next) / RANK_EVERY);
+    if (nextM > prevM && next >= RANK_EVERY) {
+      applyRankUp(nextM);
+    }
   }
 
   function spawnRing(x, y, count, colors, speed, life) {
@@ -1882,7 +1964,8 @@
   function refreshStartUI() {
     saveState = MH_STORAGE.load();
     const maxL = getDailyMaxLives();
-    startLivesBadge.innerHTML = `<span>ЖИЗНИ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, maxL)}`;
+    const shownMax = Math.max(maxL, saveState.lives);
+    startLivesBadge.innerHTML = `<span>ЖИЗНИ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, shownMax)}`;
 
     if (saveState.lives <= 0) {
       btnPlay.disabled = true;
@@ -1943,7 +2026,14 @@
     goScoreEl.textContent = String(WORLD.score);
     goBestEl.textContent = String(saveState.bestScore);
     const maxL = getDailyMaxLives();
-    goLivesRow.innerHTML = `<span>ОСТАЛОСЬ ЖИЗНЕЙ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, maxL)}`;
+    const shownMax = Math.max(maxL, saveState.lives);
+    goLivesRow.innerHTML = `<span>ОСТАЛОСЬ ЖИЗНЕЙ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, shownMax)}`;
+    const tease = document.getElementById('go-tease');
+    if (tease) {
+      tease.textContent = saveState.lives <= 0
+        ? '«Ну все, хватит беготни, пора на перекур!»'
+        : '«Эх, ещё чуть-чуть...»';
+    }
 
     if (saveState.lives > 0) {
       goActionsAlive.classList.remove('hidden');
@@ -2427,6 +2517,7 @@
     if (WORLD.crashFlash > 0) WORLD.crashFlash = Math.max(0, WORLD.crashFlash - dt);
 
     WORLD.runTime += dt;
+    if (WORLD.rankIndex > 0) WORLD.rankTime += dt;
     WORLD.speed = speedAt(WORLD.runTime);
 
     WORLD.scrollFarSky = (WORLD.scrollFarSky + WORLD.speed * 0.065 * dt) % FAR_SKY_W;
@@ -2654,7 +2745,9 @@
     const golden = f.kind === 'golden';
     WORLD.stats.fruits += 1;
     const pts = (golden ? 5 : 1) * m;
+    const prevScore = WORLD.score;
     WORLD.score += pts;
+    onScoreChanged(prevScore);
     updateHUDPills(true);
     spawnFruitSparkles(f.x + f.w / 2, fy + f.h / 2, f.kind, '+' + pts);
     if (golden) {
@@ -2865,6 +2958,7 @@
       smokes: st.smokes || 0,
       comboBreaks: st.comboBreaks || 0,
       missed: st.missed || 0,
+      bonusLives: st.bonusLives || 0,
       doubles: doubleJumpCount,
     }, WORLD.runId).catch(() => {});
   }
@@ -3576,7 +3670,11 @@
     } else if (o.kind === 'coals') {
       ctx.drawImage(MH_SPRITES.obstacles.coals[Math.floor(WORLD.time * 6) % 2], ox, oy);
     } else if (o.kind === 'bird') {
-      ctx.drawImage(MH_SPRITES.obstacles.bird[Math.floor(WORLD.time * 7 + o.x * 0.01) % 2], ox, oy);
+      const flock = (OBST.bird && OBST.bird.flock) || [{ dx: 0, dy: 0 }];
+      for (let i = 0; i < flock.length; i++) {
+        const fr = Math.floor(WORLD.time * 7 + o.x * 0.01 + i * 1.7) % 2;
+        ctx.drawImage(MH_SPRITES.obstacles.bird[fr], ox + flock[i].dx, oy + flock[i].dy);
+      }
     } else if (o.kind === 'tramp') {
       if (o.squash > 0) ctx.drawImage(MH_SPRITES.obstacles.trampSquash, ox, oy + 3);
       else ctx.drawImage(MH_SPRITES.obstacles.tramp, ox, oy);
@@ -3920,11 +4018,13 @@
       WORLD.softFlash = 0;
     },
     setScore: (s) => {
+      const prev = WORLD.score;
       WORLD.score = s;
       if (s > saveState.bestScore) {
         saveState.bestScore = s;
         MH_STORAGE.save(saveState);
       }
+      onScoreChanged(prev);
       updateHUDPills(false);
     },
     spawnObstacle: (kind, x = 112) => {
@@ -3984,6 +4084,10 @@
       pickups: WORLD.pickups.map(p => ({ kind: p.kind, x: p.x, baseY: p.baseY })),
       stats: Object.assign({}, WORLD.stats),
       toast: WORLD.toasts.length ? WORLD.toasts[0].key : null,
+      banner: WORLD.banner ? { lines: WORLD.banner.lines.slice(), t: WORLD.banner.t } : null,
+      popups: WORLD.popups.map(function (x) { return x.text; }),
+      rankIndex: WORLD.rankIndex || 0,
+      bonusLives: (WORLD.stats && WORLD.stats.bonusLives) || 0,
       spawnLog: WORLD.spawnLog.slice(),
       groundY: GROUND_Y,
     }),
@@ -3991,7 +4095,7 @@
     setFrozen: (on) => { debugFrozen = !!on; },
     markDoubleSeen: () => { saveState.doubleSeen = true; WORLD.hintT = 0; WORLD.toasts = WORLD.toasts.filter(t => t.key !== 'double'); },
     step: (frames = 1) => { for (let i = 0; i < frames; i++) update(1 / 60); },
-    setRunTime: (t) => { WORLD.runTime = t; },
+    setRunTime: (t) => { WORLD.runTime = t; if (!WORLD.rankIndex) WORLD.speed = baseSpeedAt(t); },
     // fast-forward the playing world without rendering (for gap/fairness statistics)
     simulate: (seconds, dt = 1 / 60) => {
       const n = Math.round(seconds / dt);
@@ -3999,7 +4103,7 @@
       return { mode, runTime: WORLD.runTime, score: WORLD.score };
     },
     OBST: () => JSON.parse(JSON.stringify(OBST)),
-    constants: () => ({ AIR_T, DJ_TS, JUMP_V, JUMP2_V, GRAVITY, big: OBST.hookahBig.dj }),
+    constants: () => ({ AIR_T, DJ_TS, JUMP_V, JUMP2_V, GRAVITY, big: OBST.hookahBig.dj, SPEED_DROP, RANK_EVERY, BONUS_AT }),
     spawnFruit: (kind, x = 114, y = GROUND_Y - 56) => {
       const fs = MH_SPRITES.fruits[kind];
       WORLD.fruits.push({ kind, x, baseY: y, w: fs.width, h: fs.height, phase: 0, collected: false });
