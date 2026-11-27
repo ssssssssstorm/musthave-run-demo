@@ -6,7 +6,7 @@ window.MH_TG = (function () {
   // Try a RU-reachable proxy first (Netlify, once imported — see README), then Render.
   const DEFAULT_API = 'https://musthave-run-api.onrender.com';
   const API_BASES = [
-    // 'https://musthave-run-api.netlify.app', // uncomment after the Netlify import
+    'https://musthave-run-api.netlify.app',
     DEFAULT_API
   ];
   const apiParam = new URLSearchParams(window.location.search).get('api');

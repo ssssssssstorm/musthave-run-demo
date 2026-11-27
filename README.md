@@ -65,12 +65,7 @@ curl -sS -H "X-Admin-Ts: $TS" -H "X-Admin-Sig: $SIG" \
 
 - **Mirror (live bot URL):** the Telegram menu button opens `https://ssssssssstorm.github.io/musthave-run-demo/` (same repo, GitHub Pages, deploys automatically from `main` `/`). Use this when `*.onrender.com` is frozen by a Russian ISP. Cache-busting query (`?v=`) is on JS/CSS; a `<base href="/musthave-run-demo/">` is set so relative assets resolve.
 
-- **Leaderboard API and Russian ISPs:** the API itself still runs on Render (`https://musthave-run-api.onrender.com`) and has the same IP exposure. The client tries each API base in order with a short timeout (network / 5xx → next). A Netlify Functions reverse proxy is in this repo (`netlify.toml`, `netlify/functions/api-proxy.js`) so RU clients can reach the API via Netlify IPs while the function talks to Render. **This proxy is not live until the GitHub repo is imported in Netlify** (no Netlify account was available to deploy it automatically). After import:
-
-  1. Open [app.netlify.com](https://app.netlify.com) and sign in with GitHub (`sssssssssstorm`).
-  2. Add new site → Import an existing project → `ssssssssstorm/musthave-run-demo`.
-  3. Build command empty (or `true`), publish directory `.`. Preferred site name: `musthave-run-api` (URL `https://musthave-run-api.netlify.app`).
-  4. Tell us the URL. Then uncomment that origin in `js/telegram.js` (`API_BASES`) and in the `MH_LOG` URL list in `index.html`, bump the `?v=` cache query, and push. The client will try the proxy first, then Render. CORS already allows `https://ssssssssstorm.github.io` and `https://*.netlify.app`.
+- **Leaderboard API and Russian ISPs:** the API itself still runs on Render (`https://musthave-run-api.onrender.com`) and has the same IP exposure. The client tries each API base in order with a short timeout (network / 5xx → next). First: the Netlify Functions reverse proxy `https://musthave-run-api.netlify.app` (this repo's `netlify.toml` + `netlify/functions/api-proxy.js`), so RU clients reach the API via Netlify IPs while the function talks to Render. Fallback: the Render origin. CORS allows `https://ssssssssstorm.github.io` and `https://*.netlify.app`.
 
 - **Do not use Cloudflare Workers (`*.workers.dev`) or Cloudflare Pages as the RU path.** Since 9 June 2025 major RU ISPs (Rostelecom, Megafon, Vimpelcom, MTS, MGTS) have throttled Cloudflare traffic to ~16 KB and often reset connections (Cloudflare blog, 26 June 2025). `workers.dev` is also intermittently blocked.
 
