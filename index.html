@@ -106,7 +106,7 @@
   })();
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect width=%2716%27 height=%2716%27 fill=%27%23FF4A8D%27/><rect x=%273%27 y=%273%27 width=%2710%27 height=%2710%27 fill=%27%23FFD100%27/></svg>" />
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <link rel="stylesheet" href="styles.css?v=10" />
 </head>
 <body>
   <noscript>
@@ -128,6 +128,7 @@
   </script>
   <div id="app">
     <div id="phone-stage">
+      <div id="app-toast" class="app-toast hidden" role="status"></div>
       <canvas id="game-canvas" width="195" height="422"></canvas>
 
       <!-- Minimal Rounded HUD Pills during Intro / Gameplay (6_scale_reference.png style) -->
@@ -196,6 +197,12 @@
             </span>
           </button>
 
+          <button id="btn-invite" class="px-btn px-btn-peach" type="button">
+            <span>ПРИГЛАСИ ДРУГА — ПОЛУЧИ ЖИЗНЬ</span>
+          </button>
+          <div id="invite-count" class="invite-count hidden">Друзей приглашено: 0</div>
+          <button id="btn-admin" class="px-btn-ghost hidden" type="button">АДМИНКА</button>
+
           <div id="start-lock-note" class="lock-note hidden">
             Лимит на сегодня исчерпан • <span id="start-timer">24:00:00</span>
           </div>
@@ -205,19 +212,19 @@
       <!-- SCREEN: SUBSCRIPTION GATE -->
       <section id="screen-sub" class="overlay modal-backdrop hidden">
         <div class="px-card sub-card">
-          <div class="sub-badge">MUSTHAVE TOBACCO</div>
-          <h2 class="card-title">ПОДПИШИТЕСЬ<br />НА КАНАЛ,<br />ЧТОБЫ ИГРАТЬ</h2>
+          <div class="sub-badge">MUSTHAVE</div>
+          <h2 class="card-title">Подпишись на канал MUSTHAVE, чтобы играть</h2>
           <p class="card-desc">
-            Подпишись на официальный канал @musthave_tobacco, чтобы запустить игру и попасть в рейтинг.
+            Канал @musthavetobacco — без подписки Коржик на забег не выйдет.
           </p>
 
           <div id="sub-status" class="sub-status hidden"></div>
 
           <button id="btn-subscribe" class="px-btn px-btn-tg" type="button">
-            ПОДПИСАТЬСЯ
+            ОТКРЫТЬ КАНАЛ
           </button>
           <button id="btn-check-sub" class="px-btn px-btn-pink" type="button">
-            ПРОВЕРИТЬ ПОДПИСКУ
+            Я ПОДПИСАЛСЯ — ПРОВЕРИТЬ
           </button>
           <button id="btn-sub-back" class="px-btn-ghost" type="button">
             НАЗАД
@@ -247,6 +254,11 @@
           </div>
 
           <div id="go-lives-row" class="go-lives-row"></div>
+
+          <button id="btn-go-invite" class="px-btn px-btn-peach px-btn-sm go-invite" type="button">
+            ПРИГЛАСИ ДРУГА — ПОЛУЧИ ЖИЗНЬ
+          </button>
+          <div id="go-invite-count" class="invite-count hidden">Друзей приглашено: 0</div>
 
           <div id="go-actions-alive" class="go-actions">
             <button id="btn-retry" class="px-btn px-btn-pink" type="button">
@@ -301,7 +313,7 @@
   /* Do not load telegram-web-app.js synchronously: if telegram.org hangs, the page stays blank.
      Give it 1.5s, then start the game either way. */
   (function () {
-    var VERSION = '9';
+    var VERSION = '10';
     var files = [
       'js/sprites.js?v=' + VERSION,
       'js/audio.js?v=' + VERSION,

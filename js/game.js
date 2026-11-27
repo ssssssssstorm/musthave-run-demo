@@ -208,6 +208,12 @@
   const startTimer = document.getElementById('start-timer');
   const btnPlay = document.getElementById('btn-play');
   const btnRating = document.getElementById('btn-rating');
+  const btnInvite = document.getElementById('btn-invite');
+  const inviteCountEl = document.getElementById('invite-count');
+  const btnAdmin = document.getElementById('btn-admin');
+  const btnGoInvite = document.getElementById('btn-go-invite');
+  const goInviteCountEl = document.getElementById('go-invite-count');
+  const appToastEl = document.getElementById('app-toast');
 
   const screenSub = document.getElementById('screen-sub');
   const subStatus = document.getElementById('sub-status');
@@ -234,6 +240,96 @@
 
   MH_TG.init();
   const user = MH_TG.getUser();
+  let serverMeta = {
+    ready: false,
+    gateRequired: false,
+    subscribed: false,
+    invited: 0,
+    referralLink: '',
+    vip: false,
+    banned: false,
+  };
+  let toastTimer = 0;
+  function showAppToast(msg, ms) {
+    if (!appToastEl) return;
+    appToastEl.textContent = msg;
+    appToastEl.classList.remove('hidden');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { appToastEl.classList.add('hidden'); }, ms || 2800);
+  }
+  function updateInviteUI() {
+    const n = serverMeta.invited || 0;
+    const label = 'Друзей приглашено: ' + n;
+    if (inviteCountEl) {
+      inviteCountEl.textContent = label;
+      inviteCountEl.classList.toggle('hidden', false);
+    }
+    if (goInviteCountEl) {
+      goInviteCountEl.textContent = label;
+      goInviteCountEl.classList.toggle('hidden', false);
+    }
+  }
+  function onInviteClick() {
+    MH_AUDIO.click();
+    MH_TG.haptic('light');
+    const ok = MH_TG.shareReferral(user.id);
+    if (!ok) showAppToast('Открой игру в Telegram, чтобы пригласить друга');
+  }
+  if (btnInvite) btnInvite.addEventListener('click', onInviteClick);
+  if (btnGoInvite) btnGoInvite.addEventListener('click', onInviteClick);
+  if (btnAdmin) btnAdmin.addEventListener('click', function () {
+    MH_AUDIO.click();
+    try { window.location.href = 'admin.html'; } catch (_) {}
+  });
+
+  async function syncServerSession() {
+    if (!MH_TG.isTelegram || !MH_TG.isTelegram()) return;
+    try {
+      const r = await MH_TG.openSession();
+      if (!r || !r.ok) return;
+      if (r.banned) {
+        serverMeta.banned = true;
+        showAppToast('Аккаунт заблокирован');
+        if (btnPlay) btnPlay.disabled = true;
+        return;
+      }
+      if (r.vip) {
+        serverMeta.vip = true;
+        const cap = r.maxLives || MH_STORAGE.VIP_MAX_LIVES;
+        if (MH_STORAGE.applyVipUpgrade) MH_STORAGE.applyVipUpgrade(saveState, cap);
+        else {
+          saveState.maxLives = cap;
+        }
+        MH_STORAGE.save(saveState);
+      }
+      if (r.lives && r.lives.pending) {
+        if (MH_STORAGE.grantLife) MH_STORAGE.grantLife(saveState, r.lives.pending);
+        const n = r.lives.pending;
+        const kind = r.lives.kinds && r.lives.kinds.referral ? 'referral' : (r.lives.kinds && r.lives.kinds.admin ? 'admin' : '');
+        showAppToast(kind === 'admin'
+          ? ('+' + n + ' ЖИЗНЬ от админа!')
+          : ('+' + n + ' ЖИЗНЬ за друга!'), 3200);
+        MH_TG.haptic('success');
+      }
+      if (r.gate) {
+        serverMeta.gateRequired = !!r.gate.required;
+        serverMeta.subscribed = !!r.gate.subscribed || !!r.gate.bypass || !r.gate.required;
+        if (serverMeta.subscribed) {
+          saveState.subscribed = true;
+          MH_STORAGE.save(saveState);
+        }
+      }
+      if (r.referral) {
+        serverMeta.invited = r.referral.invited || 0;
+        serverMeta.referralLink = r.referral.link || '';
+      }
+      if (r.admin && btnAdmin) btnAdmin.classList.remove('hidden');
+      serverMeta.ready = true;
+      updateInviteUI();
+      refreshStartUI();
+    } catch (_) {}
+  }
+  setTimeout(function () { syncServerSession(); }, 200);
   let saveState;
   try {
     saveState = MH_STORAGE.load();
@@ -1963,6 +2059,7 @@
 
   function refreshStartUI() {
     saveState = MH_STORAGE.load();
+    updateInviteUI();
     const maxL = getDailyMaxLives();
     const shownMax = Math.max(maxL, saveState.lives);
     startLivesBadge.innerHTML = `<span>ЖИЗНИ: ${saveState.lives}/${maxL}</span>${renderPixelHeartsHTML(saveState.lives, shownMax)}`;
@@ -2191,7 +2288,9 @@
       refreshStartUI();
       return;
     }
-    if (!saveState.subscribed) {
+    const forceGate = new URLSearchParams(window.location.search).get('gate') === '1';
+    const needGate = forceGate || (serverMeta.gateRequired && !serverMeta.subscribed && !saveState.subscribed);
+    if (needGate) {
       showScreen('sub');
     } else {
       showScreen('intro');
@@ -2207,7 +2306,7 @@
   btnSubscribe.addEventListener('click', () => {
     MH_AUDIO.click();
     MH_TG.openChannel();
-    subStatus.textContent = 'Канал открыт! Нажми «Проверить подписку»';
+    subStatus.textContent = 'Канал открыт! Нажми «Я подписался — проверить»';
     subStatus.classList.remove('hidden', 'ok');
   });
 
@@ -2218,8 +2317,10 @@
     subStatus.classList.remove('hidden', 'ok');
     try {
       const res = await MH_TG.checkSubscription();
-      if (res && res.subscribed) {
+      if (res && (res.subscribed || res.bypass || res.inactive || res.open && !res.required)) {
         saveState.subscribed = true;
+        serverMeta.subscribed = true;
+        serverMeta.gateRequired = !!(res.required && !res.bypass && !res.inactive);
         MH_STORAGE.save(saveState);
         subStatus.textContent = 'Подписка подтверждена!';
         subStatus.classList.add('ok');
@@ -2228,6 +2329,7 @@
           btnCheckSub.disabled = false;
           showScreen('intro');
         }, 420);
+        syncServerSession();
       } else {
         btnCheckSub.disabled = false;
         subStatus.textContent = 'Подписка не найдена. Подпишись на канал!';
@@ -3988,8 +4090,10 @@
   }
 
   window.__MH_DEBUG = {
-    getState: () => ({ mode, score: WORLD.score, lives: saveState.lives, runTime: WORLD.runTime, W, H, GROUND_Y }),
+    getState: () => ({ mode, score: WORLD.score, lives: saveState.lives, runTime: WORLD.runTime, W, H, GROUND_Y, invited: serverMeta.invited, gateRequired: serverMeta.gateRequired, subscribed: !!(serverMeta.subscribed || saveState.subscribed) }),
     showScreen,
+    showAppToast,
+    setServerMeta: (o) => { serverMeta = Object.assign(serverMeta, o || {}); updateInviteUI(); },
     setMenuTime: (t) => { WORLD.menuTime = t; },
     setMenuIdle: (kind, timer = 0.6) => { WORLD.menuTime = 2.0; WORLD.menuIdle = { kind, timer, dur: 2.5, hopDustDone: false }; },
     clearWorld: () => {

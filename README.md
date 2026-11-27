@@ -5,7 +5,7 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
 ## Features in This Demo
 - **100% Vanilla Static Build**: HTML5 Canvas + vanilla JS + CSS, zero build step, integer-scaled `195×422` pixel canvas (`imageSmoothingEnabled = false`).
 - **Start Menu**: Styled after the client reference (`= MUSTHAVE RUN =`, pink accents, big `ИГРАТЬ` & `РЕЙТИНГ` buttons, toggleable Santa hat & 8-bit SFX).
-- **Subscription Gate (Demo Stub)**: `Подпишитесь на канал, чтобы играть` with `Подписаться` and `Проверить подписку` buttons.
+- **Subscription Gate**: `Подпишись на канал MUSTHAVE, чтобы играть` — server checks `getChatMember(@musthavetobacco)`. If the bot is not a channel admin the gate fails open. VIPs and admins bypass. Toggle is in the admin panel.
 - **Intro Cutscene**: Corgi appears from behind wagging its tail, spins 360° around in place, crouches ready, and launches into a sprint.
 - **Signature Corgi Butt Wiggle**: Custom 4-frame running animation with exaggerated rump & stubby-tail wiggle, toggleable Santa hat, and paw dust particles.
 - **Obstacles** (all drawn on the same 1x pixel grid, ink outline + teal glass / gold accents so they pop against the sunset):
@@ -113,15 +113,10 @@ Telegram Mini Apps require **HTTPS** (all three hosts provide HTTPS automaticall
    - Paste your HTTPS URL (e.g. `https://musthave-run.vercel.app`).
 4. Share the direct Mini App link: `https://t.me/<your_bot_username>/<app_short_name>`.
 
-## Production Backend Seams (Out of Scope for Demo)
-1. **Real Subscription Check (`js/telegram.js` → `checkSubscription`)**:
-   - Set `MH_TG.CONFIG.apiBaseUrl` to your backend URL.
-   - Backend validates `Telegram.WebApp.initData` HMAC-SHA256 using your Bot Token, then calls Telegram Bot API `getChatMember(chat_id="@musthave_tobacco", user_id)` and checks `status` is `member | administrator | creator`.
-2. **Participants DB & Leaderboard (`submitScore` / `getLeaderboard`)**:
-   - Store users (`tg_id`, `username`, `first_name`, `best_score`, `lives`, `last_reset_at`) in Postgres / Supabase / SQLite.
-   - Enforce daily 5-life limit server-side so clearing browser storage cannot bypass it.
-3. **Admin Rating Reset with History**:
-   - Add a `seasons` table (`season_id`, `started_at`, `ended_at`, `snapshot_json`). Admin endpoint archives current top scores into `seasons` and resets active `best_score` to `0`.
-4. **Referral Extra Life (+1 Life)**:
-   - Launch link: `https://t.me/<bot>/<app>?startapp=ref_<referrer_tg_id>`.
-   - Read `Telegram.WebApp.initDataUnsafe.start_param` on backend when a new user completes their first run / subscription check, and credit `+1` life to `<referrer_tg_id>`.
+## Subscription, referrals, admin
+
+- **Channel gate** (`@musthavetobacco`): `POST /api/session` and `POST /api/sub/check` validate `initData` and call `getChatMember`. Passing statuses: `member`, `administrator`, `creator`, and `restricted` with `is_member`. Cache ~10 minutes. `/api/score` rejects `not_subscribed` when the gate is active. If Telegram returns “member list is inaccessible” / chat not found (bot is not a channel admin), the gate **fails open** and the admin panel shows `gate not active: bot not admin`. Toggle: admin → Настройки.
+- **Daily run cap**: `(VIP ? 100 : 5) + slack(1) + score bonus lives on accepted 24h runs + life grants in the last 24h` (referral + admin grants).
+- **Referrals**: share `https://t.me/tetsbot9145_bot?startapp=ref_<tg_id>` (also `/start ref_<id>` via the webhook). A **new** invitee (no prior runs, not self) who passes the gate (when active) credits the inviter +1 life, applied on the inviter’s next session. One referral per invitee, max 10 referral lives per inviter per 24h. `/start` users are stored for broadcast.
+- **Admin panel**: `https://ssssssssstorm.github.io/musthave-run-demo/admin.html` or `https://musthave-run-api.onrender.com/admin.html`. Login: Telegram initData for usernames `ttvwraithh`, `pnkmnmr`, `musthave_pinkman`, **or** a password. To enable password login, set `ADMIN_PASSWORD` yourself in the Render dashboard (musthave-run-api → Environment) — do not put it in chat or the repo. The server never generates or displays this password.
+- **VIP list** lives in the `vip_usernames` table (seeded with the previous hardcoded names) and can be toggled per player in the admin panel.

@@ -86,9 +86,62 @@ function startPayload() {
   };
 }
 
+function parseStartPayload(text) {
+  if (typeof text !== 'string') return '';
+  const parts = text.trim().split(/\s+/);
+  if (!parts.length) return '';
+  const first = parts[0] || '';
+  if (first !== '/start' && first.indexOf('/start@') !== 0) return '';
+  return parts[1] || '';
+}
+
+let hooks = { onStart: null };
+
+function setHooks(h) {
+  hooks = Object.assign({}, hooks, h || {});
+}
+
 async function sendStart(chatId) {
   const body = Object.assign({ chat_id: chatId }, startPayload());
   return tg('sendMessage', body);
+}
+
+async function sendChatMessage(chatId, text, extra) {
+  const body = Object.assign({ chat_id: chatId, text: String(text || '').slice(0, 4000), disable_web_page_preview: true }, extra || {});
+  return tg('sendMessage', body);
+}
+
+function stubChatMember(userId) {
+  if (process.env.MH_TG_STUB !== '1') return null;
+  if (process.env.MH_TG_STUB_GATE_ERR) {
+    return { ok: false, description: String(process.env.MH_TG_STUB_GATE_ERR) };
+  }
+  // Stub bot id is 1 (see getMe). Default: the bot is a channel admin unless MH_TG_STUB_BOT_ADMIN=0.
+  if (String(userId) === '1') {
+    const admin = process.env.MH_TG_STUB_BOT_ADMIN !== '0';
+    return { ok: true, result: { status: admin ? 'administrator' : 'left' } };
+  }
+  let map = {};
+  try { map = JSON.parse(process.env.MH_TG_STUB_MEMBERS || '{}'); } catch (_) { map = {}; }
+  const st = map[String(userId)] || 'left';
+  const isMember = st === 'restricted' ? true : (st === 'member' || st === 'administrator' || st === 'creator');
+  return { ok: true, result: { status: st, is_member: st === 'restricted' ? true : undefined } };
+}
+
+async function getChatMember(chatId, userId) {
+  const stub = stubChatMember(userId);
+  if (stub) return stub;
+  return tg('getChatMember', { chat_id: chatId, user_id: userId });
+}
+
+let cachedMe = null;
+async function getMe() {
+  if (process.env.MH_TG_STUB === '1') {
+    return { ok: true, result: { id: 1, username: 'tetsbot9145_bot' } };
+  }
+  if (cachedMe && cachedMe.ok) return cachedMe;
+  cachedMe = await tg('getMe');
+  return cachedMe;
 }
 
 async function handleWebhook(req, res, readJson) {
@@ -112,6 +165,10 @@ async function handleWebhook(req, res, readJson) {
   }
   const msg = update && update.message;
   if (msg && isStartCommand(msg.text) && msg.chat && msg.chat.id) {
+    const payload = parseStartPayload(msg.text);
+    if (typeof hooks.onStart === 'function') {
+      try { await hooks.onStart(msg, payload); } catch (e) { console.error('[tg] onStart', e && e.message); }
+    }
     const sent = await sendStart(msg.chat.id);
     if (!sent.ok) console.log('[tg] start_send_fail', sent.description || 'err');
     else console.log('[tg] start_ok');
@@ -187,4 +244,11 @@ module.exports = {
   webhookStatus,
   startPayload,
   isStartCommand,
+  parseStartPayload,
+  setHooks,
+  tg,
+  sendChatMessage,
+  getChatMember,
+  getMe,
+  secrets,
 };

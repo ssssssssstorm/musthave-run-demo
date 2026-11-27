@@ -35,8 +35,9 @@ window.MH_TG = (function () {
     return []; // local / unknown origin: skip, so the console isn't filled with CORS errors
   }
   const CONFIG = {
-    channelUsername: 'musthave_tobacco',
-    channelUrl: 'https://t.me/musthave_tobacco',
+    channelUsername: 'musthavetobacco',
+    channelUrl: 'https://t.me/musthavetobacco',
+    botUsername: 'tetsbot9145_bot',
     subscriptionApi: null,
     apiBases: resolveApiBases(),
     apiBaseUrl: resolveApiBases()[0] || null,
@@ -289,28 +290,95 @@ window.MH_TG = (function () {
     };
   }
 
-  function openChannel() {
-    if (tg && tg.openTelegramLink) {
-      try {
-        tg.openTelegramLink(CONFIG.channelUrl);
-        return;
-      } catch (_) {}
+  function openTelegramLink(url) {
+    const app = getWebApp();
+    if (app && typeof app.openTelegramLink === 'function') {
+      try { app.openTelegramLink(url); return true; } catch (_) {}
     }
-    window.open(CONFIG.channelUrl, '_blank', 'noopener');
+    if (app && typeof app.openLink === 'function') {
+      try { app.openLink(url); return true; } catch (_) {}
+    }
+    try { window.open(url, '_blank', 'noopener'); return true; } catch (_) { return false; }
+  }
+
+  function openChannel() {
+    openTelegramLink(CONFIG.channelUrl);
+  }
+
+  function getStartParam() {
+    try {
+      const app = getWebApp();
+      if (app && app.initDataUnsafe && app.initDataUnsafe.start_param) {
+        return String(app.initDataUnsafe.start_param);
+      }
+    } catch (_) {}
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return q.get('tgWebAppStartParam') || q.get('startapp') || q.get('start') || '';
+    } catch (_) { return ''; }
+  }
+
+  function referralLink(userId) {
+    const id = userId || (getUser() && getUser().id);
+    if (!id || id === 'demo-player') return '';
+    return 'https://t.me/' + CONFIG.botUsername + '?startapp=ref_' + id;
+  }
+
+  function shareReferral(userId) {
+    const link = referralLink(userId);
+    if (!link) return false;
+    const text = 'Сыграй в MUSTHAVE RUN — собери фрукты с Коржиком и помоги ему с новым ароматом!';
+    const share = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
+    return openTelegramLink(share);
+  }
+
+  const SUB_CACHE_KEY = 'mh_sub_ok_v1';
+  function readSubCache() {
+    try {
+      const raw = sessionStorage.getItem(SUB_CACHE_KEY);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (o && o.t && Date.now() - o.t < 10 * 60 * 1000) return o;
+    } catch (_) {}
+    return null;
+  }
+  function writeSubCache(data) {
+    try { sessionStorage.setItem(SUB_CACHE_KEY, JSON.stringify({ t: Date.now(), data: data })); } catch (_) {}
+  }
+
+  async function postInit(path, extra, timeoutMs) {
+    const initData = getInitData();
+    if (!initData) return { ok: false, error: 'not_telegram', demo: true };
+    const body = Object.assign({ initData: initData, startParam: getStartParam() }, extra || {});
+    const r = await apiFetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, timeoutMs);
+    return Object.assign({ status: r.status }, r.data);
+  }
+
+  async function openSession() {
+    const r = await postInit('/api/session', {}, 20000);
+    if (r && r.ok && r.gate && r.gate.subscribed) writeSubCache({ subscribed: true });
+    return r;
   }
 
   async function checkSubscription() {
-    // channel-subscription check is still a demo stub (no backend endpoint yet)
-    if (CONFIG.subscriptionApi && tg && tg.initData) {
-      const res = await fetch(`${CONFIG.subscriptionApi}/api/check-subscription`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: tg.initData }),
-      });
-      return res.json();
+    const cached = readSubCache();
+    if (cached && cached.data && cached.data.subscribed) {
+      return Object.assign({ cached: true }, cached.data);
     }
-    await new Promise(r => setTimeout(r, 650));
-    return { subscribed: true, demo: true };
+    if (!getInitData()) {
+      return { subscribed: true, required: false, open: true, demo: true };
+    }
+    try {
+      const r = await postInit('/api/sub/check', {}, 20000);
+      if (r && r.ok && r.subscribed) writeSubCache(r);
+      return r;
+    } catch (_) {
+      return { ok: false, subscribed: false, required: false, open: true, error: 'network' };
+    }
   }
 
   return {
@@ -320,11 +388,17 @@ window.MH_TG = (function () {
     haptic,
     getUser,
     openChannel,
+    openTelegramLink,
+    getStartParam,
+    referralLink,
+    shareReferral,
+    openSession,
     checkSubscription,
     submitScore,
     fetchLeaderboard,
     flushPending,
     warmUp,
     isTelegram,
+    getInitData,
   };
 })();

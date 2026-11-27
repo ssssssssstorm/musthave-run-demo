@@ -194,6 +194,7 @@ window.MH_STORAGE = (function () {
     normalizeUsername,
     isVip,
     getMaxLives,
+    applyVipUpgrade,
     load,
     save,
     spendLife,

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>MUSTHAVE RUN — Админка</title>
+  <link rel="stylesheet" href="admin.css?v=10" />
+  <script>
+  (function () {
+    try {
+      if (location.hostname.indexOf('github.io') !== -1 && location.pathname.indexOf('/musthave-run-demo') === 0) {
+        var b = document.createElement('base');
+        b.href = '/musthave-run-demo/';
+        document.head.appendChild(b);
+      }
+    } catch (e) {}
+  })();
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <h1 class="logo">MUSTHAVE RUN</h1>
+    <div class="sub">Админ-панель • сезон, игроки, рассылка, подписка</div>
+
+    <section id="login" class="card login">
+      <h2>Вход</h2>
+      <p class="muted" id="login-hint">Войди через Telegram (админский аккаунт) или пароль из переменной ADMIN_PASSWORD на сервере.</p>
+      <div class="err hidden" id="login-err"></div>
+      <div class="row" style="margin-top:10px">
+        <input id="login-pass" type="password" placeholder="Пароль администратора" autocomplete="current-password" />
+        <button id="btn-login-pass" type="button">Войти</button>
+      </div>
+      <div style="margin-top:10px">
+        <button id="btn-login-tg" class="peach" type="button">Войти через Telegram</button>
+      </div>
+    </section>
+
+    <section id="app" class="hidden">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <div class="muted" id="whoami"></div>
+        <button id="btn-logout" class="ghost" type="button">Выйти</button>
+      </div>
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="dash" type="button">Обзор</button>
+        <button class="tab" data-tab="board" type="button">Рейтинг</button>
+        <button class="tab" data-tab="players" type="button">Игроки</button>
+        <button class="tab" data-tab="seasons" type="button">Сезоны</button>
+        <button class="tab" data-tab="cheat" type="button">Античит</button>
+        <button class="tab" data-tab="mail" type="button">Рассылка</button>
+        <button class="tab" data-tab="settings" type="button">Настройки</button>
+      </div>
+
+      <section id="tab-dash">
+        <div class="card">
+          <h2>Сводка</h2>
+          <div id="gate-flag" class="flag hidden"></div>
+          <div class="stats" id="dash-stats"></div>
+        </div>
+        <div class="card">
+          <h2>14 дней</h2>
+          <div class="charts">
+            <div>
+              <div class="muted">Забеги / игроки</div>
+              <canvas id="chart-runs" class="chart" width="480" height="180"></canvas>
+            </div>
+            <div>
+              <div class="muted">Средний и лучший счёт</div>
+              <canvas id="chart-score" class="chart" width="480" height="180"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Топ-5 — призы</h2>
+          <div class="winners" id="winners"></div>
+        </div>
+      </section>
+
+      <section id="tab-board" class="hidden">
+        <div class="card">
+          <h2>Онлайн-рейтинг</h2>
+          <div class="row">
+            <input id="board-q" type="search" placeholder="Поиск: ник, имя, id" />
+            <select id="board-season"></select>
+            <button id="btn-board" type="button">Найти</button>
+          </div>
+          <div style="overflow:auto;margin-top:10px">
+            <table>
+              <thead><tr><th>#</th><th>Игрок</th><th>Счёт</th><th>Забеги</th><th></th></tr></thead>
+              <tbody id="board-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-players" class="hidden">
+        <div class="card">
+          <h2>Игроки</h2>
+          <div class="row">
+            <input id="players-q" type="search" placeholder="Поиск" />
+            <button id="btn-players" type="button">Найти</button>
+          </div>
+          <div style="overflow:auto;margin-top:10px">
+            <table>
+              <thead><tr><th>ID</th><th>Игрок</th><th>Статус</th><th></th></tr></thead>
+              <tbody id="players-body"></tbody>
+            </table>
+          </div>
+          <p class="muted" id="players-total"></p>
+        </div>
+      </section>
+
+      <section id="tab-seasons" class="hidden">
+        <div class="card">
+          <h2>Сезоны</h2>
+          <div id="seasons-list"></div>
+          <div class="confirm-box hidden" id="season-confirm">
+            <p>Закрыть текущий сезон и начать новый? Рейтинг обнулится, архив сохранится.</p>
+            <button id="btn-season-yes" class="bad" type="button">Да, сбросить рейтинг</button>
+            <button id="btn-season-no" class="ghost" type="button">Отмена</button>
+          </div>
+          <button id="btn-season-reset" class="bad" type="button">Сбросить рейтинг (новый сезон)</button>
+        </div>
+      </section>
+
+      <section id="tab-cheat" class="hidden">
+        <div class="card">
+          <h2>Отклонённые забеги</h2>
+          <div style="overflow:auto">
+            <table>
+              <thead><tr><th>Когда</th><th>Игрок</th><th>Счёт</th><th>Причина</th></tr></thead>
+              <tbody id="cheat-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-mail" class="hidden">
+        <div class="card">
+          <h2>Рассылка тем, кто нажал /start</h2>
+          <textarea id="mail-text" placeholder="Текст сообщения…"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button id="btn-mail-prep" type="button">Подготовить</button>
+          </div>
+          <div class="confirm-box hidden" id="mail-confirm">
+            <p id="mail-preview"></p>
+            <button id="btn-mail-send" class="ok" type="button">Отправить</button>
+            <button id="btn-mail-cancel" class="ghost" type="button">Отмена</button>
+          </div>
+          <p class="muted" id="mail-status"></p>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="hidden">
+        <div class="card">
+          <h2>Гейт подписки</h2>
+          <div id="gate-box"></div>
+          <div class="row" style="margin-top:10px">
+            <button id="btn-gate-on" class="ok" type="button">Включить гейт</button>
+            <button id="btn-gate-off" class="ghost" type="button">Выключить гейт</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>VIP-список</h2>
+          <div id="vip-list" class="muted"></div>
+          <div class="row" style="margin-top:8px">
+            <input id="vip-name" type="text" placeholder="username без @" />
+            <button id="btn-vip-add" type="button">Добавить</button>
+            <button id="btn-vip-del" class="ghost" type="button">Убрать</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Экспорт CSV</h2>
+          <div class="row">
+            <select id="export-season"></select>
+            <button id="btn-export" type="button">Скачать</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <div id="player-modal" class="modal-bg hidden">
+    <div class="card modal" id="player-card"></div>
+  </div>
+
+  <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+  <script src="js/admin.js?v=10"></script>
+</body>
+</html>

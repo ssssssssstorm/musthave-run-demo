@@ -4,8 +4,11 @@
 // Env: TELEGRAM_BOT_TOKEN (secret), DATABASE_URL, ALLOWED_ORIGINS (comma separated), PORT
 'use strict';
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const metaMod = require('./meta');
 
 const PORT = +process.env.PORT || 10000;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -14,10 +17,9 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://musthave-run.on
 const SEASON_ID = +process.env.SEASON_ID || 1;
 const AUTH_MAX_AGE_S = 24 * 3600;
 
-// keep in sync with js/storage.js
-const VIP_USERNAMES = ['pnkmnmr', 'musthave_pinkman', 'ttvwraithh', 'andreisibiriakov', 've1er8'];
-const DEFAULT_LIVES = 5;
-const VIP_LIVES = 100;
+// VIP usernames now live in the vip_usernames table (seeded from meta.SEED_VIPS).
+const DEFAULT_LIVES = metaMod.DEFAULT_LIVES;
+const VIP_LIVES = metaMod.VIP_LIVES;
 
 // Anti-cheat limits (see README "Online leaderboard")
 const LIMITS = {
@@ -140,7 +142,7 @@ function validateInitData(initData) {
 }
 
 function isVip(username) {
-  return !!username && VIP_USERNAMES.includes(String(username).toLowerCase().replace(/^@/, ''));
+  return metaMod.SEED_VIPS.indexOf(metaMod.normUser(username)) !== -1;
 }
 
 // ---------------- rate limiting (in memory, single instance) ----------------
@@ -191,8 +193,8 @@ function corsHeaders(req) {
     return {
       'Access-Control-Allow-Origin': origin,
       'Vary': 'Origin',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data, X-Admin-Ts, X-Admin-Sig, X-Admin-Session, X-Admin-Action, Authorization',
       'Access-Control-Max-Age': '600',
     };
   }
@@ -253,23 +255,28 @@ function plausibility(score, runTimeMs, fruits, golden) {
 }
 
 async function upsertPlayer(client, u) {
-  await client.query(
+  const r = await client.query(
     `INSERT INTO players (tg_id, username, first_name, last_name, photo_url, is_vip)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (tg_id) DO UPDATE SET username = EXCLUDED.username, first_name = EXCLUDED.first_name,
-       last_name = EXCLUDED.last_name, photo_url = COALESCE(EXCLUDED.photo_url, players.photo_url),
-       is_vip = EXCLUDED.is_vip, updated_at = now()`,
+     ON CONFLICT (tg_id) DO UPDATE SET username = COALESCE(EXCLUDED.username, players.username),
+       first_name = COALESCE(EXCLUDED.first_name, players.first_name),
+       last_name = COALESCE(EXCLUDED.last_name, players.last_name),
+       photo_url = COALESCE(EXCLUDED.photo_url, players.photo_url),
+       is_vip = players.is_vip OR EXCLUDED.is_vip, updated_at = now()
+     RETURNING is_vip, banned, (xmax = 0) AS inserted`,
     [u.id, u.username, u.first_name, u.last_name, u.photo_url, isVip(u.username)]
   );
+  return r.rows[0];
 }
 
-async function rankOf(client, tgId) {
+async function rankOf(client, tgId, seasonId) {
+  const sid = seasonId || await meta.currentSeason();
   const r = await client.query(
     `SELECT b.best_score, b.achieved_at,
        (SELECT COUNT(*) FROM best_scores x WHERE x.season_id = b.season_id AND (x.best_score > b.best_score
           OR (x.best_score = b.best_score AND (x.achieved_at < b.achieved_at OR (x.achieved_at = b.achieved_at AND x.tg_id < b.tg_id))))) + 1 AS rank
      FROM best_scores b WHERE b.season_id = $1 AND b.tg_id = $2`,
-    [SEASON_ID, tgId]
+    [sid, tgId]
   );
   if (!r.rows.length) return null;
   return { rank: +r.rows[0].rank, best: r.rows[0].best_score };
@@ -283,6 +290,11 @@ async function handleScore(req, res) {
   const auth = validateInitData(body.initData);
   if (!auth.ok) return send(req, res, 401, { ok: false, error: auth.error });
   const u = auth.user;
+  const seasonId = await meta.currentSeason();
+  try { await gate.assertSubscribedOrThrow(u); } catch (e) {
+    if (e.payload) return send(req, res, e.status || 403, e.payload);
+    throw e;
+  }
 
   const rs = cleanStats(body.runStats);
   const score = +body.score;
@@ -295,12 +307,16 @@ async function handleScore(req, res) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await upsertPlayer(client, u);
+    const prow = await upsertPlayer(client, u);
+    if (prow && prow.banned) {
+      await client.query('ROLLBACK');
+      return send(req, res, 403, { ok: false, error: 'banned' });
+    }
     if (clientRunId) {
       const dup = await client.query('SELECT id, accepted, reject_reason FROM runs WHERE tg_id = $1 AND client_run_id = $2', [u.id, clientRunId]);
       if (dup.rows.length) {
         await client.query('COMMIT');
-        const rk = await rankOf(client, u.id);
+        const rk = await rankOf(client, u.id, seasonId);
         return send(req, res, 200, { ok: true, duplicate: true, accepted: dup.rows[0].accepted, reason: dup.rows[0].reject_reason || undefined, best: rk ? rk.best : 0, rank: rk ? rk.rank : null });
       }
     }
@@ -321,7 +337,9 @@ async function handleScore(req, res) {
        FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours' AND accepted = true`,
       [u.id]
     );
-    const maxRuns = (isVip(u.username) ? VIP_LIVES : DEFAULT_LIVES) + LIMITS.dailySlack + (prevBonus.rows[0].bonus || 0) + currentBonus;
+    const vipNow = !!(prow && prow.is_vip) || (await meta.isVipUsername(u.username));
+    const grantBonus = await sessionApi.grantsLast24h(client, u.id);
+    const maxRuns = (vipNow ? VIP_LIVES : DEFAULT_LIVES) + LIMITS.dailySlack + (prevBonus.rows[0].bonus || 0) + currentBonus + grantBonus;
     const cnt = await client.query(`SELECT COUNT(*)::int AS n FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours'`, [u.id]);
     if (cnt.rows[0].n >= maxRuns) {
       await client.query('ROLLBACK');
@@ -331,7 +349,7 @@ async function handleScore(req, res) {
     const ins = await client.query(
       `INSERT INTO runs (season_id, tg_id, client_run_id, score, run_time_ms, fruits, stats, accepted, reject_reason, ip_hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-      [SEASON_ID, u.id, clientRunId, safeScore, safeTime, fruits >= 0 ? fruits : null, rs, !reason, reason, ipHash(ip)]
+      [seasonId, u.id, clientRunId, safeScore, safeTime, fruits >= 0 ? fruits : null, rs, !reason, reason, ipHash(ip)]
     );
     let isNewBest = false;
     if (!reason) {
@@ -344,12 +362,12 @@ async function handleScore(req, res) {
            run_id = CASE WHEN EXCLUDED.best_score > best_scores.best_score THEN EXCLUDED.run_id ELSE best_scores.run_id END,
            achieved_at = CASE WHEN EXCLUDED.best_score > best_scores.best_score THEN now() ELSE best_scores.achieved_at END
          RETURNING best_score, run_id`,
-        [SEASON_ID, u.id, safeScore, ins.rows[0].id]
+        [seasonId, u.id, safeScore, ins.rows[0].id]
       );
       isNewBest = String(up.rows[0].run_id) === String(ins.rows[0].id);
     }
     await client.query('COMMIT');
-    const rk = await rankOf(client, u.id);
+    const rk = await rankOf(client, u.id, seasonId);
     if (reason) console.log(`[score] rejected user=${u.id} reason=${reason} score=${safeScore} t=${safeTime}`);
     return send(req, res, 200, { ok: true, accepted: !reason, reason: reason || undefined, isNewBest, best: rk ? rk.best : 0, rank: rk ? rk.rank : null });
   } catch (e) {
@@ -361,6 +379,7 @@ async function handleScore(req, res) {
 }
 
 async function handleLeaderboard(req, res, url) {
+  const seasonId = await meta.currentSeason();
   const ip = clientIp(req);
   if (!rateLimit('ip-lb:' + ip, 40, 40 / 60)) return send(req, res, 429, { ok: false, error: 'rate_limited' });
   const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
@@ -378,9 +397,9 @@ async function handleLeaderboard(req, res, url) {
      FROM best_scores b JOIN players p ON p.tg_id = b.tg_id
      WHERE b.season_id = $1
      ORDER BY b.best_score DESC, b.achieved_at ASC, b.tg_id ASC LIMIT $2`,
-    [SEASON_ID, limit]
+    [seasonId, limit]
   );
-  const total = await pool.query('SELECT COUNT(*)::int AS n FROM best_scores WHERE season_id = $1', [SEASON_ID]);
+  const total = await pool.query('SELECT COUNT(*)::int AS n FROM best_scores WHERE season_id = $1', [seasonId]);
   const rows = top.rows.map((r, i) => ({
     rank: i + 1,
     name: displayName(r),
@@ -399,7 +418,7 @@ async function handleLeaderboard(req, res, url) {
       me = { rank: null, best: 0, inTop: false, total: total.rows[0].n };
     }
   }
-  return send(req, res, 200, { ok: true, season: SEASON_ID, total: total.rows[0].n, top: rows, me, authError: authError || undefined });
+  return send(req, res, 200, { ok: true, season: seasonId, total: total.rows[0].n, top: rows, me, authError: authError || undefined });
 }
 
 function checkAdmin(req, action) {
@@ -468,6 +487,49 @@ async function handleAdminDelete(req, res, id) {
   return send(req, res, 200, { ok: true, deleted: { runs: r1.rowCount, best: r2.rowCount, players: r3.rowCount } });
 }
 
+
+const meta = metaMod.createMeta(pool);
+const gate = require('./gate').createGate(pool, meta);
+const sessionApi = require('./session').createSession(pool, meta, gate);
+let adminApi = null;
+function getAdminApi() {
+  if (!adminApi) {
+    adminApi = require('./admin').createAdmin(pool, meta, gate, sessionApi, {
+      send, readJson, validateInitData, checkAdminHmac: checkAdmin, clientIp, rateLimit, corsHeaders,
+    });
+  }
+  return adminApi;
+}
+
+const ROOT_DIR = path.join(__dirname, '..');
+const STATIC_MAP = {
+  '/admin': 'admin.html',
+  '/admin.html': 'admin.html',
+  '/admin.css': 'admin.css',
+  '/js/admin.js': 'js/admin.js',
+  '/fonts/PressStart2P-Regular.ttf': 'fonts/PressStart2P-Regular.ttf',
+};
+const STATIC_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.ttf': 'font/ttf',
+};
+function handleStatic(req, res, pathname) {
+  const rel = STATIC_MAP[pathname];
+  if (!rel || req.method !== 'GET') return false;
+  const full = path.join(ROOT_DIR, rel);
+  if (!full.startsWith(ROOT_DIR) || !fs.existsSync(full)) return false;
+  const ext = path.extname(full);
+  res.writeHead(200, {
+    'Content-Type': STATIC_MIME[ext] || 'application/octet-stream',
+    'Cache-Control': pathname.indexOf('.html') !== -1 ? 'no-store' : 'public, max-age=3600',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  fs.createReadStream(full).pipe(res);
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url, 'http://x'); } catch (_) { return send(req, res, 400, { ok: false }); }
@@ -485,10 +547,19 @@ const server = http.createServer(async (req, res) => {
       }
       return res.end();
     }
+    if (handleStatic(req, res, url.pathname)) return;
     if (url.pathname === '/api/health' || url.pathname === '/') {
       let db = false;
       try { await pool.query('SELECT 1'); db = true; } catch (_) {}
-      return send(req, res, db ? 200 : 503, { ok: db, service: 'musthave-run-api', season: SEASON_ID, db });
+      let season = SEASON_ID;
+      try { season = await meta.currentSeason(); } catch (_) {}
+      return send(req, res, db ? 200 : 503, { ok: db, service: 'musthave-run-api', season: season, db });
+    }
+    if (url.pathname === '/api/session' && req.method === 'POST') return await sessionApi.handleSession(req, res, { readJson, send, validateInitData, rateLimit, clientIp });
+    if (url.pathname === '/api/sub/check' && req.method === 'POST') return await sessionApi.handleSubCheck(req, res, { readJson, send, validateInitData, rateLimit, clientIp });
+    if (url.pathname.indexOf('/api/admin/') === 0) {
+      const r = await getAdminApi().handle(req, res, url);
+      if (r !== 'next') return;
     }
     if (url.pathname === '/api/score' && req.method === 'POST') return await handleScore(req, res);
     if (url.pathname === '/api/leaderboard' && req.method === 'GET') return await handleLeaderboard(req, res, url);
@@ -498,24 +569,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && tgBot.matchesWebhookPath(url.pathname)) {
       return await tgBot.handleWebhook(req, res, readJson);
     }
-    if (url.pathname === '/api/admin/tgstatus' && req.method === 'GET') {
-      if (!checkAdmin(req, 'tg')) return send(req, res, 403, { ok: false });
-      const st = await tgBot.webhookStatus();
-      return send(req, res, 200, { ok: true, webhook: st });
-    }
     const m = url.pathname.match(/^\/api\/admin\/player\/(\d{1,20})$/);
     if (m && req.method === 'DELETE') return await handleAdminDelete(req, res, m[1]);
     return send(req, res, 404, { ok: false, error: 'not_found' });
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error('[error]', e && e.message);
-    if (!res.headersSent) send(req, res, status, { ok: false, error: status === 500 ? 'server_error' : e.message });
+    if (!res.headersSent) send(req, res, status, e.payload || { ok: false, error: status === 500 ? 'server_error' : e.message });
   }
 });
 
 async function migrate() {
   for (let i = 0; i < 10; i++) {
-    try { await pool.query(SCHEMA); console.log('[db] schema ready'); return; } catch (e) {
+    try { await pool.query(SCHEMA); await pool.query(metaMod.SCHEMA_EXTRA); console.log('[db] schema ready'); return; } catch (e) {
       console.error('[db] migrate failed, retrying:', e.message);
       await new Promise(r => setTimeout(r, 3000));
     }
@@ -531,7 +597,9 @@ if (require.main === module) {
       console.error('[menu] skipped', e && e.message);
     }
     try {
-      require('./telegram-bot').syncBot().catch((e) => console.error('[tg] failed', e && e.message));
+      const tgBot = require('./telegram-bot');
+      tgBot.setHooks({ onStart: (msg, payload) => sessionApi.recordBotStart(msg, payload) });
+      tgBot.syncBot().catch((e) => console.error('[tg] failed', e && e.message));
     } catch (e) {
       console.error('[tg] skipped', e && e.message);
     }

@@ -22,8 +22,8 @@ function allowedOrigin(origin) {
 function corsHeaders(origin) {
   const allow = allowedOrigin(origin);
   const h = {
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data, X-Admin-Ts, X-Admin-Sig, X-Admin-Session, X-Admin-Action, Authorization',
     'Access-Control-Max-Age': '600',
     'Vary': 'Origin',
   };
