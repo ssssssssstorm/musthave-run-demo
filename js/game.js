@@ -73,12 +73,13 @@
   defObstacle('shilavilki', MH_SPRITES.obstacles.shilavilki, [{ x: 2, y: 3, w: 12, h: 10 }, { x: 5, y: 12, w: 6, h: 16 }]);
   defObstacle('coals', MH_SPRITES.obstacles.coals[0], [{ x: 4, y: 4, w: 16, h: 8 }]);
   OBST.hookahBig.dj = doubleProfile(OBST.hookahBig.hth);
-  // Low-flying bird: hovers `lift` px above the ground. Its hit rect ends 13px above the ground, so the
-  // ducking corgi (hit box 9px tall) slides under it while a standing one (14px) is hit. It can also be
-  // jumped (feet must rise > 19px), so the fairness model treats it as a small obstacle of that height.
-  defObstacle('bird', MH_SPRITES.obstacles.bird[0], [{ x: 2, y: 1, w: 12, h: 7 }]);
-  OBST.bird.lift = 12;
-  OBST.bird.hth = 20;
+  // Low-flying bird: the sprite sits `lift` px above the ground so it clearly reads as flying (bottom
+  // of the 9px sprite is 18px up, just at the standing corgi's head / hat). The hit rect extends a
+  // few pixels below the sprite so a standing corgi (hit top 14px up) is still hit, while a ducking
+  // one (hit top 9px up) slides under. It can also be jumped (feet must rise ~26px).
+  defObstacle('bird', MH_SPRITES.obstacles.bird[0], [{ x: 2, y: 1, w: 12, h: 15 }]);
+  OBST.bird.lift = 18;
+  OBST.bird.hth = 26;
   OBST.bird.air = true;
   // MUSTHAVE tin trampoline: no hit rects, it launches the corgi high (with a flip)
   OBST.tramp = { kind: 'tramp', w: 24, h: 10, rects: [], bx0: 0, bx1: 24, by0: 0, wHit: 24, hth: 0, big: false, pad: true };
@@ -1082,6 +1083,7 @@
     duckTouch: false,
     duckMinUntil: 0,
     botDuck: false,
+    birdHintsThisRun: 0,
     stats: null,
   };
 
@@ -1184,6 +1186,7 @@
     WORLD.duckTouch = false;
     WORLD.duckMinUntil = 0;
     WORLD.botDuck = false;
+    WORLD.birdHintsThisRun = 0;
     WORLD.corgi.wasDucking = false;
     WORLD.stats = newStats();
     WORLD.runId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -1218,6 +1221,30 @@
 
   // One-time pixel toasts, remembered in the save so each feature is explained only once
   let lastInputKeyboard = false;
+  // Popup "СМАХНИ ВНИЗ" + pixel arrow when a bird approaches. Shown every time in the first
+  // few runs, and for the first several birds of later runs — not only once.
+  const BIRD_HINT_PER_RUN = 4;
+  const BIRD_HINT_EARLY_GAMES = 3;
+  function maybeShowBirdHint(o) {
+    if (o.hintArmed || o.x >= W - 8 || o.x + o.w < WORLD.corgi.x + 4) return;
+    o.hintArmed = true;
+    const early = (saveState.gamesPlayed || 0) < BIRD_HINT_EARLY_GAMES;
+    if (!early && WORLD.birdHintsThisRun >= BIRD_HINT_PER_RUN) return;
+    o.hintT = 0;
+    o.showHint = true;
+    WORLD.birdHintsThisRun += 1;
+  }
+  function drawDownArrow(targetCtx, cx, y, color) {
+    const x = Math.round(cx);
+    const y0 = Math.round(y);
+    targetCtx.fillStyle = color;
+    targetCtx.fillRect(x - 1, y0, 3, 1);
+    targetCtx.fillRect(x - 1, y0 + 1, 3, 2);
+    targetCtx.fillRect(x - 3, y0 + 3, 7, 1);
+    targetCtx.fillRect(x - 2, y0 + 4, 5, 1);
+    targetCtx.fillRect(x - 1, y0 + 5, 3, 1);
+    targetCtx.fillRect(x, y0 + 6, 1, 1);
+  }
   function featureSeen(key) {
     if (!saveState.hints || typeof saveState.hints !== 'object') saveState.hints = {};
     if (saveState.hints[key]) return;
@@ -2443,6 +2470,7 @@
     if (!saveState.doubleSeen && WORLD.obstacles.some(o => o.kind === 'hookahBig' && o.x < W - 12)) featureSeen('double');
     for (const o of WORLD.obstacles) {
       if (o.x < W - 14 && (o.kind === 'tramp' || o.kind === 'bird')) featureSeen(o.kind);
+      if (o.kind === 'bird') maybeShowBirdHint(o);
     }
     for (const pk of WORLD.pickups) if (pk.x < W - 14) featureSeen(pk.kind);
     if (WORLD.fruits.some(f => f.kind === 'golden' && f.x < W - 14 && f.baseY > 0)) featureSeen('golden');
@@ -2475,6 +2503,11 @@
       if (def.air && !o.passed && o.x + def.bx1 < cx1) {
         o.passed = true;
         WORLD.stats.birdsPassed += 1;
+        o.showHint = false;
+      }
+      if (o.showHint) {
+        o.hintT = (o.hintT || 0) + dt;
+        if (ducking || o.hintT > 2.4) o.showHint = false;
       }
       if (WORLD.invulnT > 0 || hitDone) continue;
       for (const r of def.rects) {
@@ -3575,6 +3608,12 @@
       } else if (o.kind === 'bird') {
         ctx.fillStyle = 'rgba(20, 12, 28, 0.22)';
         ctx.fillRect(ox + 3, GROUND_Y + 2, 10, 1);
+        if (o.showHint && mode === 'playing') {
+          const hx = ox + Math.round(o.w / 2);
+          const hy = oy - 20 + Math.round(Math.sin((o.hintT || 0) * 9) * 1);
+          drawPixelTextCached(ctx, 'СМАХНИ ВНИЗ', hx, hy, 8, '#FFD100', { align: 'center', outline: '#140C1C' });
+          drawDownArrow(ctx, hx, hy + 11, '#FFD100');
+        }
       }
     }
 
@@ -3881,7 +3920,7 @@
       runTime: WORLD.runTime,
       score: WORLD.score,
       corgi: { x: WORLD.corgi.x, y: WORLD.corgi.y, vy: WORLD.corgi.vy, grounded: WORLD.corgi.grounded, jumps: WORLD.corgi.jumps, airTime: WORLD.corgi.airTime, flipT: WORLD.corgi.flipT },
-      obstacles: WORLD.obstacles.map(o => ({ kind: o.kind, x: o.x, y: o.y, w: o.w, h: o.h })),
+      obstacles: WORLD.obstacles.map(o => ({ kind: o.kind, x: o.x, y: o.y, w: o.w, h: o.h, showHint: !!o.showHint, hintT: o.hintT || 0 })),
       fruits: WORLD.fruits.map(f => ({ kind: f.kind, x: f.x, baseY: f.baseY })),
       hitFreeze: WORLD.hitFreeze,
       doubles: doubleJumpCount,

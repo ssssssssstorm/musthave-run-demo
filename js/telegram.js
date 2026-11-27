@@ -5,11 +5,18 @@ window.MH_TG = (function () {
   // Online leaderboard API (separate Render web service). `?api=<url>` overrides it for local testing.
   const DEFAULT_API = 'https://musthave-run-api.onrender.com';
   const apiParam = new URLSearchParams(window.location.search).get('api');
+  function resolveApiBase() {
+    if (apiParam && /^https?:\/\//.test(apiParam)) return apiParam.replace(/\/+$/, '');
+    try {
+      if (window.location.origin === 'https://musthave-run.onrender.com') return DEFAULT_API;
+    } catch (_) {}
+    return null; // local / unknown origin: skip, so the console isn't filled with CORS errors
+  }
   const CONFIG = {
     channelUsername: 'musthave_tobacco',
     channelUrl: 'https://t.me/musthave_tobacco',
     subscriptionApi: null,
-    apiBaseUrl: (apiParam && /^https?:\/\//.test(apiParam) ? apiParam : DEFAULT_API).replace(/\/+$/, ''),
+    apiBaseUrl: resolveApiBase(),
   };
   const PENDING_KEY = 'mh_pending_scores_v1';
 
@@ -104,6 +111,7 @@ window.MH_TG = (function () {
   }
 
   async function apiFetch(path, opts = {}, timeoutMs = 25000) {
+    if (!CONFIG.apiBaseUrl) throw new Error('no_api');
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
     try {
@@ -118,6 +126,7 @@ window.MH_TG = (function () {
 
   // Free Render services sleep when idle: wake the API as soon as the app opens
   function warmUp() {
+    if (!CONFIG.apiBaseUrl) return;
     apiFetch('/api/health', {}, 60000).catch(() => {});
   }
 

@@ -27,7 +27,7 @@ Playable pitch demo of **MUSTHAVE RUN**, a 1-tap 8-bit pixel endless runner for 
   | 15 s | **MUSTHAVE tin trampoline**: run/land on it → very high bounce with a flip through a high fruit arc |
   | 20 s | **Golden fruit**: rare, +5 (× combo), sparkles |
   | 25 s | **Coal magnet** pickup: 5 s, nearby fruit flies to the corgi (HUD timer) |
-  | 30 s | **Low bird**: duck under it (or jump it); always a solo pattern with full fair spacing |
+  | 30 s | **Low bird**: flies just above the standing corgi's head; duck under it (or jump it). A `СМАХНИ ВНИЗ` popup with a pixel arrow appears when it approaches (every time in the first few runs). Always a solo pattern with full fair spacing |
   | 35 s | **Santa-cap shield** pickup: absorbs one hit (bubble, pop effect, ~1.3 s blink invulnerability) |
   | 40 s, then every 30–38 s | **ФРУКТОВЫЙ ДОЖДЬ!** — ~4.6 s obstacle-free stretch full of falling fruit |
   | 50 s, then every 22–32 s | **Coal smoke**: a dithered smoke patch drifts over the ground ahead for ~2.3 s; obstacles under it stay faintly visible |
