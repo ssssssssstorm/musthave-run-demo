@@ -114,3 +114,7 @@ tr.top3 { background: #FFE0C8; }
 .winner.r2 { background: #F0F0F0; }
 .winner.r3 { background: #FFE0C8; }
 .confirm-box { background: #FFE8A0; border: 3px solid var(--ink); padding: 10px; margin: 8px 0; }
+
+.danger-card { border-color: #C43B5A; background: #FFE4EA; }
+.danger-card h2 { color: #8B1230; }
+.confirm-box input { width: 100%; margin-top: 4px; }

@@ -129,6 +129,7 @@
   const FAST_FALL_V = 430;
   const BIRD_IMPACT_T = 1.22;      // min seconds from spawn to impact (grows with speed)
   const BIRD_GROUND_T = 0.62;      // grounded window required after the previous obstacle
+  const BIRD_AFTER_T = 1.05;       // duck + stand + react after a flock before the next jump
   const BIRD_WARN_T = 1.05;        // edge warning starts this many seconds before impact
   const TUTORIAL_SPEED = 0.65;     // first flock of a run: ease to 65% speed
   const SPEED_EASE = 0.30;         // time constant for speed-scale ease in/out
@@ -163,16 +164,21 @@
     shield: ['КОЛПАК-ЩИТ', 'СПАСЕТ ОТ УДАРА'],
     smoke: ['ДЫМ ОТ УГЛЕЙ!', 'СМОТРИ СКВОЗЬ'],
   };
-  // Minimum fair hit-box gap (px) between obstacle a (passed first) and b at world speed v:
-  // the corgi has to land from a, react, and be airborne high enough again when it reaches b.
-  function requiredGapPx(a, b, v) {
+  // Fair gap between obstacle a (passed first) and b: land / duck / stand / react as needed.
+  function neededGapTime(a, b) {
     if (b && b.duckOnly) {
-      // Conservative: full land time from a, then a grounded window, so the player is not
-      // mid-jump / mid-bounce when the flock arrives. Do not subtract a's up-time.
-      const t = obstLandTime(a) + BIRD_GROUND_T;
-      return Math.max(8, (v + 6) * t - a.wHit);
+      // Full land from a, then a grounded window, so the player is not mid-jump when the flock arrives.
+      return obstLandTime(a) + BIRD_GROUND_T;
     }
-    const t = obstLandTime(a) + REACT_T + obstUpTime(b) - obstUpTime(a);
+    if (a && a.duckOnly) {
+      // Duck under the flock, stand up, then react and start the next jump.
+      return BIRD_AFTER_T + obstUpTime(b);
+    }
+    return obstLandTime(a) + REACT_T + obstUpTime(b) - obstUpTime(a);
+  }
+  // Minimum fair hit-box gap (px) between obstacle a (passed first) and b at world speed v.
+  function requiredGapPx(a, b, v) {
+    const t = neededGapTime(a, b);
     return Math.max(8, (v + 6) * t - a.wHit);
   }
   function birdLeadX(v) {
@@ -323,6 +329,10 @@
         }
         MH_STORAGE.save(saveState);
       }
+      if (MH_STORAGE.applyServerLivesReset) {
+        const cap = (r.maxLives || saveState.maxLives || MH_STORAGE.DEFAULT_MAX_LIVES);
+        MH_STORAGE.applyServerLivesReset(saveState, r, cap);
+      }
       if (r.lives && r.lives.pending) {
         if (MH_STORAGE.grantLife) MH_STORAGE.grantLife(saveState, r.lives.pending);
         const n = r.lives.pending;
@@ -363,6 +373,7 @@
 
   const params = new URLSearchParams(window.location.search);
   let autoJump = params.get('autojump') === '1';
+  let autoClear = false;
 
   // ============================================================
   // CRISP BINARY PIXEL TEXT RENDERER
@@ -1341,6 +1352,8 @@
     WORLD.patternCount = 0;
     WORLD.hintT = 0;
     WORLD.spawnLog = [];
+    WORLD.layoutLog = [];
+    lastKinds = [];
     WORLD.spawnCooldown = 1.0;
     WORLD.dustTimer = 0;
     WORLD.pickups = [];
@@ -1653,8 +1666,11 @@
   function scheduleRainIfDue(tail, first, v) {
     if (WORLD.rain || WORLD.runTime < WORLD.nextRainAt) return false;
     const front = WORLD.corgi.x + 25;
-    const startIn = Math.max(0.2, (W + 14 + tail.off + tail.def.bx0 - front) / v + obstLandTime(tail.def) - obstUpTime(tail.def) + 0.2);
-    const need = startIn + RAIN_DUR + 0.9 - (W + 14 + first.bx0 - front) / v;
+    let startIn = Math.max(0.2, (W + 14 + tail.off + tail.def.bx0 - front) / v + obstLandTime(tail.def) - obstUpTime(tail.def) + 0.2);
+    if (tail.def.duckOnly) startIn = Math.max(startIn, (W + 14 + tail.off + tail.def.bx1 - front) / v + BIRD_AFTER_T);
+    const afterRain = first.duckOnly ? BIRD_GROUND_T + 0.9 : 0.9;
+    const appearX = first.duckOnly ? birdLeadX(v) : (W + 14);
+    const need = startIn + RAIN_DUR + afterRain - (appearX + first.bx0 - front) / v;
     WORLD.spawnCooldown = Math.max(WORLD.spawnCooldown, need);
     WORLD.rain = { startIn, t: 0, dur: RAIN_DUR, active: false, spawnT: 0, goldenDone: false };
     WORLD.nextRainAt = WORLD.runTime + startIn + randRange(30, 38);
@@ -1732,7 +1748,25 @@
     }
     return c;
   }
+  function birdThreat(horizon) {
+    const v = Math.max(40, WORLD.speed);
+    const rear = WORLD.corgi.x + 6;
+    for (let i = 0; i < WORLD.obstacles.length; i++) {
+      const o = WORLD.obstacles[i];
+      if (o.kind !== 'bird') continue;
+      const tPass = (o.x + OBST.bird.bx1 - rear) / v;
+      if (tPass > -0.15 && tPass < horizon) return true;
+    }
+    if (WORLD.pending && WORLD.pending.items.some(function (it) { return it.kind === 'bird'; })) {
+      if (WORLD.spawnCooldown + BIRD_IMPACT_T < horizon) return true;
+    }
+    return false;
+  }
   function startSmoke() {
+    if (WORLD.rain || birdThreat(3.0)) {
+      WORLD.nextSmokeAt = WORLD.runTime + 1.6;
+      return;
+    }
     WORLD.smoke = { t: 0, dur: 2.3, x0: Math.round(W * 0.4), canvas: buildSmokeCanvas() };
     WORLD.stats.smokes += 1;
     WORLD.nextSmokeAt = WORLD.runTime + randRange(22, 32);
@@ -1858,8 +1892,11 @@
     }
     if (lastKinds.length > 6) lastKinds = lastKinds.slice(-6);
     const lastIt = p.items[p.items.length - 1];
-    WORLD.tail = { def: OBST[lastIt.kind], off: lastIt.off };
+    let tailOff = lastIt.off;
+    if (OBST[lastIt.kind].duckOnly) tailOff += (birdX0 - (W + 14));
+    WORLD.tail = { def: OBST[lastIt.kind], off: tailOff };
     WORLD.patternCount += 1;
+    const layout = collectLayoutIssues(WORLD.speed);
     WORLD.spawnLog.push({
       t: +WORLD.runTime.toFixed(2),
       kinds: p.items.map(it => it.kind),
@@ -1867,15 +1904,97 @@
       gap: Math.round(p.gap || 0),
       req: Math.round(p.req || 0),
       v: Math.round(WORLD.speed),
+      tailOff: Math.round(tailOff),
+      ok: layout.length === 0,
     });
+    if (layout.length) {
+      if (!WORLD.layoutLog) WORLD.layoutLog = [];
+      for (let i = 0; i < layout.length; i++) WORLD.layoutLog.push(layout[i]);
+    }
     if (WORLD.spawnLog.length > 600) WORLD.spawnLog.shift();
     placeFruitAbove(p.items);
     planNext();
   }
 
+  function collectLayoutIssues(v) {
+    const speed = Math.max(40, v || WORLD.speed || SPEED_MIN);
+    const list = WORLD.obstacles.slice().sort(function (a, b) { return a.x - b.x; });
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j];
+        const da = OBST[a.kind], db = OBST[b.kind];
+        if (!(da.duckOnly || db.duckOnly)) continue;
+        const gapPx = (b.x + db.bx0) - (a.x + da.bx1);
+        const gapT = gapPx / speed;
+        const needT = neededGapTime(da, db);
+        if (gapT + 0.045 < needT) {
+          out.push({
+            t: +WORLD.runTime.toFixed(2),
+            a: a.kind, b: b.kind,
+            gapT: +gapT.toFixed(3),
+            needT: +needT.toFixed(3),
+            v: Math.round(speed),
+          });
+        }
+      }
+    }
+    if (WORLD.smoke) {
+      const left = WORLD.smoke.dur - WORLD.smoke.t;
+      for (let i = 0; i < list.length; i++) {
+        const o = list[i];
+        if (o.kind !== 'bird') continue;
+        const tti = birdTimeToImpact(o);
+        if (o.x < W + 8 && tti < left + 0.4) {
+          out.push({ t: +WORLD.runTime.toFixed(2), a: 'smoke', b: 'bird', gapT: +tti.toFixed(3), needT: +(left + 0.4).toFixed(3), v: Math.round(speed) });
+        }
+      }
+    }
+    if (WORLD.rain && WORLD.rain.active && list.some(function (o) { return o.kind === 'bird' && birdTimeToImpact(o) < BIRD_GROUND_T; })) {
+      out.push({ t: +WORLD.runTime.toFixed(2), a: 'rain', b: 'bird', gapT: 0, needT: BIRD_GROUND_T, v: Math.round(speed) });
+    }
+    return out;
+  }
+
+  function spawnSafetyDelay(p) {
+    const v = Math.max(40, WORLD.speed);
+    const front = WORLD.corgi.x + 25;
+    const first = OBST[p.items[0].kind];
+    const spawnX = first.duckOnly ? birdLeadX(v) : (W + 14);
+    const impactT = (spawnX + first.bx0 - front) / v;
+    let delay = 0;
+    for (let i = 0; i < WORLD.obstacles.length; i++) {
+      const o = WORLD.obstacles[i];
+      if (o.passed) continue;
+      const d = OBST[o.kind];
+      const passT = (o.x + d.bx1 - front) / v;
+      const wait = passT + neededGapTime(d, first) - impactT;
+      if (wait > delay) delay = wait;
+    }
+    if (first.duckOnly) {
+      if (WORLD.smoke) {
+        const left = WORLD.smoke.dur - WORLD.smoke.t + 0.35;
+        if (left > delay) delay = left;
+      }
+      if (WORLD.rain) {
+        const rainEnd = WORLD.rain.active
+          ? (WORLD.rain.dur - WORLD.rain.t)
+          : (WORLD.rain.startIn + WORLD.rain.dur);
+        const waitRain = rainEnd + BIRD_GROUND_T - impactT;
+        if (waitRain > delay) delay = waitRain;
+      }
+    }
+    return delay > 0.02 ? delay : 0;
+  }
+
   function spawnNextPattern() {
     if (!WORLD.pending) {
       WORLD.pending = { items: [{ kind: Math.random() < 0.5 ? 'coals' : 'hookah', off: 0 }], bucket: 'start', gap: 0, req: 0 };
+    }
+    const wait = spawnSafetyDelay(WORLD.pending);
+    if (wait > 0) {
+      WORLD.spawnCooldown = wait;
+      return;
     }
     const p = WORLD.pending;
     WORLD.pending = null;
@@ -3041,7 +3160,7 @@
         return;
       }
     }
-    if (c.grounded) {
+    if (c.grounded && !autoClear) {
       // next obstacle: the visible one, or the one that is about to roll in (the bot may peek at the spawn timer)
       const tVisible = target ? (target.l - front) / v : 99;
       const tObs = Math.min(tVisible, WORLD.spawnCooldown + (W + 14 - front) / v);
@@ -4200,6 +4319,8 @@
       WORLD.spawnCooldown = 3.0;
       WORLD.pending = null;
       WORLD.tail = null;
+      lastKinds = [];
+      WORLD.layoutLog = [];
       WORLD.puffs = [];
       WORLD.hitFreeze = 0;
       WORLD.crashFlash = 0;
@@ -4309,9 +4430,11 @@
       tutorialBirdDone: !!WORLD.tutorialBirdDone,
       duckBuffered: !!WORLD.duckBuffered,
       spawnLog: WORLD.spawnLog.slice(),
+      layoutLog: (WORLD.layoutLog || []).slice(),
       groundY: GROUND_Y,
     }),
-    setAutoJump: (on) => { autoJump = !!on; },
+    setAutoJump: (on) => { autoJump = !!on; if (on) autoClear = false; },
+    setAutoClear: (on) => { autoClear = !!on; autoJump = autoJump || !!on; },
     setFrozen: (on) => { debugFrozen = !!on; },
     markDoubleSeen: () => { saveState.doubleSeen = true; WORLD.hintT = 0; WORLD.toasts = WORLD.toasts.filter(t => t.key !== 'double'); },
     step: (frames = 1) => { for (let i = 0; i < frames; i++) update(1 / 60); },
@@ -4323,9 +4446,25 @@
       return { mode, runTime: WORLD.runTime, score: WORLD.score };
     },
     OBST: () => JSON.parse(JSON.stringify(OBST)),
-    constants: () => ({ AIR_T, DJ_TS, JUMP_V, JUMP2_V, GRAVITY, big: OBST.hookahBig.dj, SPEED_DROP, RANK_EVERY, BONUS_AT, BIRD_IMPACT_T, BIRD_GROUND_T, BIRD_WARN_T, TUTORIAL_SPEED }),
+    constants: () => ({ AIR_T, DJ_TS, JUMP_V, JUMP2_V, GRAVITY, big: OBST.hookahBig.dj, SPEED_DROP, RANK_EVERY, BONUS_AT, BIRD_IMPACT_T, BIRD_GROUND_T, BIRD_AFTER_T, BIRD_WARN_T, TUTORIAL_SPEED }),
     birdLeadX: (v) => birdLeadX(v),
     requiredGapPx: (a, b, v) => requiredGapPx(OBST[a], OBST[b], v),
+    neededGapTime: (a, b) => neededGapTime(OBST[a], OBST[b]),
+    layoutIssues: () => collectLayoutIssues(WORLD.speed),
+    setRng: (seed) => {
+      if (seed == null) {
+        if (Math.__mhOrig) { Math.random = Math.__mhOrig; delete Math.__mhOrig; }
+        return;
+      }
+      if (!Math.__mhOrig) Math.__mhOrig = Math.random;
+      let s = seed >>> 0;
+      Math.random = function () {
+        s = (s + 0x6D2B79F5) | 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
     startTutorialBird: () => {
       WORLD.tutorialBirdDone = false;
       WORLD.speedScale = 1;

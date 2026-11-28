@@ -348,6 +348,7 @@
           '<button type="button" data-act="ban" data-id="' + esc(p.id) + '">' + (p.banned ? 'Разбанить' : 'Забанить') + '</button>' +
           '<button type="button" data-act="vip" data-id="' + esc(p.id) + '" data-username="' + esc(p.username || '') + '">' + (p.vip ? 'Снять VIP' : 'Дать VIP') + '</button>' +
           '<button type="button" class="peach" data-act="lives" data-id="' + esc(p.id) + '">+1 жизнь</button>' +
+          '<button type="button" class="bad" data-act="reset-lives" data-id="' + esc(p.id) + '">Сбросить жизни</button>' +
           '<button type="button" class="ghost" data-act="wipe" data-id="' + esc(p.id) + '">Удалить очки сезона</button>' +
           '<button type="button" class="bad" data-act="delete" data-id="' + esc(p.id) + '">Удалить игрока</button>' +
           '<button type="button" class="ghost" data-act="close">Закрыть</button>' +
@@ -366,6 +367,10 @@
       /* toggle decided by label — fetch? we pass unban if needed via data */
     }
     if (act === 'lives') body.action = 'lives', body.amount = 1;
+    if (act === 'reset-lives') {
+      if (!confirm('Сбросить дневные жизни этого игрока?')) return;
+      body.action = 'reset-lives';
+    }
     if (act === 'wipe') body.action = 'delete-score';
     if (act === 'delete') {
       if (!confirm('Удалить игрока и все его данные?')) return;
@@ -423,6 +428,35 @@
       show($('season-confirm'), false);
       if (r.data && r.data.ok) { loadSeasons(); loadDash(); loadBoard(); }
       else alert((r.data && r.data.error) || 'Ошибка');
+    });
+  }
+
+  function prepareFullReset() {
+    $('full-reset-status').textContent = '';
+    $('full-reset-phrase').value = '';
+    post('/api/admin/test-reset/confirm', {}).then(function (r) {
+      if (!(r.data && r.data.ok)) { alert('Не удалось подготовить сброс'); return; }
+      $('btn-full-reset-yes').setAttribute('data-confirm', r.data.confirm);
+      show($('full-reset-confirm'), true);
+    });
+  }
+  function doFullReset() {
+    const phrase = ($('full-reset-phrase').value || '').trim();
+    if (phrase !== 'СБРОС') {
+      $('full-reset-status').textContent = 'Введи СБРОС заглавными буквами.';
+      return;
+    }
+    const confirmTok = $('btn-full-reset-yes').getAttribute('data-confirm');
+    post('/api/admin/test-reset', { confirm: confirmTok, phrase: phrase }).then(function (r) {
+      if (r.data && r.data.ok) {
+        show($('full-reset-confirm'), false);
+        $('full-reset-status').textContent = 'Готово: сезон #' + r.data.from + ' → #' + r.data.to + ', epoch ' + r.data.resetEpoch;
+        loadSeasons();
+        loadDash();
+        loadBoard();
+      } else {
+        $('full-reset-status').textContent = (r.data && r.data.error) || 'Ошибка';
+      }
     });
   }
 
@@ -545,6 +579,12 @@
   $('btn-season-reset').addEventListener('click', prepareSeasonReset);
   $('btn-season-no').addEventListener('click', function () { show($('season-confirm'), false); });
   $('btn-season-yes').addEventListener('click', doSeasonReset);
+  $('btn-full-reset').addEventListener('click', prepareFullReset);
+  $('btn-full-reset-no').addEventListener('click', function () {
+    show($('full-reset-confirm'), false);
+    $('full-reset-status').textContent = '';
+  });
+  $('btn-full-reset-yes').addEventListener('click', doFullReset);
   $('seasons-list').addEventListener('click', function (e) {
     const s = e.target.getAttribute('data-season');
     if (s) { $('board-season').value = s; setTab('board'); }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>MUSTHAVE RUN — Админка</title>
-  <link rel="stylesheet" href="admin.css?v=10" />
+  <link rel="stylesheet" href="admin.css?v=11" />
   <script>
   (function () {
     try {
@@ -120,6 +120,20 @@
           </div>
           <button id="btn-season-reset" class="bad" type="button">Сбросить рейтинг (новый сезон)</button>
         </div>
+        <div class="card danger-card" style="margin-top:14px">
+          <h2>Тестовый сброс</h2>
+          <p class="muted">Опасно: закроет текущий сезон в архив, начнёт новый и сбросит дневные жизни всем игрокам (на сервере и в клиентах).</p>
+          <button id="btn-full-reset" class="bad" type="button">Полный сброс для теста</button>
+          <div class="confirm-box hidden" id="full-reset-confirm">
+            <p>Это архивирует сезон, обнулит рейтинг и сбросит жизни всех игроков. Для подтверждения введи <b>СБРОС</b>.</p>
+            <div class="row" style="margin:8px 0">
+              <input id="full-reset-phrase" type="text" maxlength="16" placeholder="СБРОС" autocomplete="off" />
+            </div>
+            <button id="btn-full-reset-yes" class="bad" type="button">Подтвердить полный сброс</button>
+            <button id="btn-full-reset-no" class="ghost" type="button">Отмена</button>
+          </div>
+          <p class="muted" id="full-reset-status"></p>
+        </div>
       </section>
 
       <section id="tab-cheat" class="hidden">
@@ -184,6 +198,6 @@
   </div>
 
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
-  <script src="js/admin.js?v=10"></script>
+  <script src="js/admin.js?v=11"></script>
 </body>
 </html>

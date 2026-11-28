@@ -288,6 +288,21 @@ function createAdmin(pool, meta, gate, sessionApi, helpers) {
     return { season, csv: lines.join('\n') + '\n' };
   }
 
+  async function rotateSeason(client, cur) {
+    await client.query('UPDATE seasons SET ended_at = now() WHERE id = $1 AND ended_at IS NULL', [cur]);
+    const next = cur + 1;
+    await client.query(
+      'INSERT INTO seasons (id, name, started_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO NOTHING',
+      [next, 'Сезон #' + next]
+    );
+    await client.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('current_season', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [String(next)]
+    );
+    return next;
+  }
+
   function confirmToken(kind, extra) {
     const exp = Math.floor(Date.now() / 1000) + 120;
     const payload = b64url(JSON.stringify({ typ: kind, exp, extra }));
@@ -438,6 +453,17 @@ function createAdmin(pool, meta, gate, sessionApi, helpers) {
         await meta.audit(actor, 'lives', { id, amount });
         return send(req, res, 200, { ok: true, amount });
       }
+      if (action === 'reset-lives') {
+        const p = await pool.query('SELECT tg_id FROM players WHERE tg_id = $1', [id]);
+        if (!p.rows.length) return send(req, res, 404, { ok: false, error: 'not_found' });
+        const r = await pool.query(
+          'UPDATE players SET lives_reset_at = now(), updated_at = now() WHERE tg_id = $1 RETURNING lives_reset_at',
+          [id]
+        );
+        const at = r.rows[0] && r.rows[0].lives_reset_at;
+        await meta.audit(actor, 'reset-lives', { id, livesResetAt: at });
+        return send(req, res, 200, { ok: true, livesResetAt: at ? new Date(at).toISOString() : null });
+      }
       if (action === 'vip') {
         const vip = !!body.vip;
         const uname = body.username ? normUser(body.username) : null;
@@ -475,17 +501,7 @@ function createAdmin(pool, meta, gate, sessionApi, helpers) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('UPDATE seasons SET ended_at = now() WHERE id = $1 AND ended_at IS NULL', [cur]);
-        const next = cur + 1;
-        await client.query(
-          'INSERT INTO seasons (id, name, started_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO NOTHING',
-          [next, 'Сезон #' + next]
-        );
-        await client.query(
-          `INSERT INTO settings (key, value, updated_at) VALUES ('current_season', $1, now())
-           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-          [String(next)]
-        );
+        const next = await rotateSeason(client, cur);
         await client.query('COMMIT');
         meta.invalidate();
         await meta.audit(actor, 'season-reset', { from: cur, to: next });
@@ -502,6 +518,55 @@ function createAdmin(pool, meta, gate, sessionApi, helpers) {
       if (!actor) return;
       const cur = await meta.currentSeason();
       return send(req, res, 200, { ok: true, confirm: confirmToken('season-reset', { from: cur }), from: cur });
+    }
+    if (path === '/api/admin/test-reset/confirm' && method === 'POST') {
+      const actor = await requireAdmin(req, res);
+      if (!actor) return;
+      const cur = await meta.currentSeason();
+      const epoch = parseInt(await meta.getSetting('reset_epoch', '0'), 10) || 0;
+      return send(req, res, 200, {
+        ok: true,
+        confirm: confirmToken('test-reset', { from: cur, epoch }),
+        from: cur,
+        epoch,
+        phrase: 'СБРОС',
+      });
+    }
+    if (path === '/api/admin/test-reset' && method === 'POST') {
+      const body = await readJson(req);
+      const actor = await requireAdmin(req, res, body);
+      if (!actor) return;
+      const phrase = String((body && body.phrase) || '').trim();
+      if (phrase !== 'СБРОС') return send(req, res, 400, { ok: false, error: 'phrase_required' });
+      const conf = readConfirm(body.confirm, 'test-reset');
+      if (!conf) return send(req, res, 400, { ok: false, error: 'confirm_required' });
+      const cur = await meta.currentSeason();
+      const epoch = (parseInt(await meta.getSetting('reset_epoch', '0'), 10) || 0) + 1;
+      const resetAt = new Date().toISOString();
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const next = await rotateSeason(client, cur);
+        await client.query(
+          `INSERT INTO settings (key, value, updated_at) VALUES ('reset_epoch', $1, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+          [String(epoch)]
+        );
+        await client.query(
+          `INSERT INTO settings (key, value, updated_at) VALUES ('reset_at', $1, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+          [resetAt]
+        );
+        await client.query('COMMIT');
+        meta.invalidate();
+        await meta.audit(actor, 'test-reset', { from: cur, to: next, epoch, resetAt });
+        return send(req, res, 200, { ok: true, from: cur, to: next, resetEpoch: epoch, resetAt });
+      } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw e;
+      } finally {
+        client.release();
+      }
     }
 
     if (path === '/api/admin/export' && method === 'GET') {

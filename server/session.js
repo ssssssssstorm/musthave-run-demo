@@ -34,6 +34,42 @@ function createSession(pool, meta, gate) {
     return r.rows[0];
   }
 
+  async function livesCutoff(client, tgId) {
+    const epoch = parseInt(await meta.getSetting('reset_epoch', '0'), 10) || 0;
+    const resetAt = await meta.getSetting('reset_at', '');
+    let playerAt = null;
+    if (tgId) {
+      try {
+        const r = await client.query('SELECT lives_reset_at FROM players WHERE tg_id = $1', [tgId]);
+        playerAt = r.rows[0] && r.rows[0].lives_reset_at;
+      } catch (_) {}
+    }
+    let ts = 0;
+    if (resetAt) {
+      const d = Date.parse(resetAt);
+      if (Number.isFinite(d)) ts = d;
+    }
+    if (playerAt) {
+      const d = new Date(playerAt).getTime();
+      if (Number.isFinite(d) && d > ts) ts = d;
+    }
+    return {
+      epoch,
+      livesResetAt: ts ? new Date(ts).toISOString() : null,
+      cutoff: ts ? new Date(ts) : null,
+    };
+  }
+
+  function dailyWindow(params, cutoff) {
+    if (cutoff) {
+      return {
+        sql: "created_at > now() - interval '24 hours' AND created_at > $" + (params.length + 1) + '::timestamptz',
+        params: params.concat([cutoff.toISOString()]),
+      };
+    }
+    return { sql: "created_at > now() - interval '24 hours'", params: params };
+  }
+
   async function recordBotStart(msg, payload) {
     const from = msg.from || {};
     const chatId = msg.chat && msg.chat.id;
@@ -108,10 +144,12 @@ function createSession(pool, meta, gate) {
     }
     await client.query('UPDATE players SET invited_by = COALESCE(invited_by, $2) WHERE tg_id = $1', [user.id, inviterId]);
 
+    const invCut = await livesCutoff(client, inviterId);
+    const win = dailyWindow([inviterId], invCut.cutoff);
     const today = await client.query(
       `SELECT COALESCE(SUM(amount), 0)::int AS n FROM life_grants
-       WHERE tg_id = $1 AND kind = 'referral' AND created_at > now() - interval '24 hours'`,
-      [inviterId]
+       WHERE tg_id = $1 AND kind = 'referral' AND ` + win.sql,
+      win.params
     );
     if ((today.rows[0].n || 0) >= REF_DAILY_CAP) {
       return { ok: true, credited: false, reason: 'daily_cap', inviterId };
@@ -123,13 +161,16 @@ function createSession(pool, meta, gate) {
     return { ok: true, credited: true, inviterId };
   }
 
-  async function claimGrants(client, tgId) {
-    const r = await client.query(
-      `UPDATE life_grants SET claimed_at = now()
-       WHERE tg_id = $1 AND claimed_at IS NULL
-       RETURNING id, kind, amount`,
-      [tgId]
-    );
+  async function claimGrants(client, tgId, cutoff) {
+    const params = [tgId];
+    let sql = `UPDATE life_grants SET claimed_at = now()
+       WHERE tg_id = $1 AND claimed_at IS NULL`;
+    if (cutoff) {
+      params.push(cutoff.toISOString());
+      sql += ' AND created_at > $2::timestamptz';
+    }
+    sql += ' RETURNING id, kind, amount';
+    const r = await client.query(sql, params);
     let pending = 0;
     const kinds = {};
     for (const row of r.rows) {
@@ -149,11 +190,12 @@ function createSession(pool, meta, gate) {
     return { invited: r.rows[0].invited || 0, total: r.rows[0].total || 0 };
   }
 
-  async function grantsLast24h(client, tgId) {
+  async function grantsLast24h(client, tgId, cutoff) {
+    const win = dailyWindow([tgId], cutoff);
     const r = await client.query(
       `SELECT COALESCE(SUM(amount), 0)::int AS n FROM life_grants
-       WHERE tg_id = $1 AND created_at > now() - interval '24 hours'`,
-      [tgId]
+       WHERE tg_id = $1 AND ` + win.sql,
+      win.params
     );
     return r.rows[0].n || 0;
   }
@@ -180,13 +222,16 @@ function createSession(pool, meta, gate) {
       const subOk = !!(sub.subscribed || sub.bypass || sub.inactive || !sub.required);
       const inviterId = await resolveStartParam(u.id, startParam);
       const ref = await maybeQualifyReferral(client, u, row, inviterId, subOk);
-      const claimed = await claimGrants(client, u.id);
+      const cut = await livesCutoff(client, u.id);
+      const claimed = await claimGrants(client, u.id, cut.cutoff);
       const stats = await referralStats(client, u.id);
       await client.query('COMMIT');
       const vip = !!(row.is_vip) || (await meta.isVipUsername(u.username));
       return send(req, res, 200, {
         ok: true,
         vip,
+        resetEpoch: cut.epoch,
+        livesResetAt: cut.livesResetAt,
         admin: require('./meta').isAdminUsername(u.username),
         banned: false,
         gate: {
@@ -265,6 +310,8 @@ function createSession(pool, meta, gate) {
     handleSession,
     handleSubCheck,
     grantsLast24h,
+    livesCutoff,
+    dailyWindow,
     parseRef,
   };
 }

@@ -78,6 +78,8 @@ window.MH_STORAGE = (function () {
       sound: true,
       music: true,
       gamesPlayed: 0,
+      resetEpoch: 0,
+      livesResetAt: '',
     };
   }
 
@@ -168,6 +170,30 @@ window.MH_STORAGE = (function () {
     return state;
   }
 
+  function applyServerLivesReset(state, payload, maxLives) {
+    const epoch = payload && payload.resetEpoch != null ? parseInt(payload.resetEpoch, 10) : 0;
+    const at = (payload && payload.livesResetAt) || '';
+    const prevEpoch = state.resetEpoch || 0;
+    const prevAt = state.livesResetAt || '';
+    const epochBump = epoch && epoch > prevEpoch;
+    const atBump = at && at > prevAt;
+    if (epochBump || atBump) {
+      const cap = maxLives || state.maxLives || DEFAULT_MAX_LIVES;
+      state.lives = cap;
+      state.depletedAt = null;
+      state.maxLives = cap;
+      state.resetEpoch = epoch || prevEpoch;
+      state.livesResetAt = at || prevAt;
+      save(state);
+      return true;
+    }
+    if (epoch && !state.resetEpoch) {
+      state.resetEpoch = epoch;
+      save(state);
+    }
+    return false;
+  }
+
   function getRemainingResetMs(state) {
     if (state.lives > 0) return 0;
     const at = state.depletedAt || Date.now();
@@ -199,6 +225,7 @@ window.MH_STORAGE = (function () {
     save,
     spendLife,
     grantLife,
+    applyServerLivesReset,
     getRemainingResetMs,
     getLeaderboard,
   };

@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 INSERT INTO settings (key, value) VALUES ('gate_enabled', 'true') ON CONFLICT (key) DO NOTHING;
 INSERT INTO settings (key, value) VALUES ('current_season', '1') ON CONFLICT (key) DO NOTHING;
+INSERT INTO settings (key, value) VALUES ('reset_epoch', '0') ON CONFLICT (key) DO NOTHING;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS lives_reset_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS vip_usernames (
   username TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

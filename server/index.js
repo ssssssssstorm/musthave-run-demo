@@ -332,15 +332,18 @@ async function handleScore(req, res) {
     // Extra daily runs equal the bonuses actually earned on accepted 24h runs (plus this run, if it is plausible).
     const currentBonus = reason ? 0 : Math.min(claimedBonus, expectedBonus);
     if (!reason) rs.bonusLives = currentBonus;
+    const cut = await sessionApi.livesCutoff(client, u.id);
+    const bonusWin = sessionApi.dailyWindow([u.id], cut.cutoff);
     const prevBonus = await client.query(
       `SELECT COALESCE(SUM(GREATEST(0, LEAST(3, COALESCE((stats->>'bonusLives')::int, 0)))), 0)::int AS bonus
-       FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours' AND accepted = true`,
-      [u.id]
+       FROM runs WHERE tg_id = $1 AND accepted = true AND ` + bonusWin.sql,
+      bonusWin.params
     );
     const vipNow = !!(prow && prow.is_vip) || (await meta.isVipUsername(u.username));
-    const grantBonus = await sessionApi.grantsLast24h(client, u.id);
+    const grantBonus = await sessionApi.grantsLast24h(client, u.id, cut.cutoff);
     const maxRuns = (vipNow ? VIP_LIVES : DEFAULT_LIVES) + LIMITS.dailySlack + (prevBonus.rows[0].bonus || 0) + currentBonus + grantBonus;
-    const cnt = await client.query(`SELECT COUNT(*)::int AS n FROM runs WHERE tg_id = $1 AND created_at > now() - interval '24 hours'`, [u.id]);
+    const cntWin = sessionApi.dailyWindow([u.id], cut.cutoff);
+    const cnt = await client.query(`SELECT COUNT(*)::int AS n FROM runs WHERE tg_id = $1 AND ` + cntWin.sql, cntWin.params);
     if (cnt.rows[0].n >= maxRuns) {
       await client.query('ROLLBACK');
       return send(req, res, 429, { ok: false, error: 'daily_cap', maxRuns });
